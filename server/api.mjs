@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,12 +8,14 @@ import { matches, viewer } from '../src/data.js'
 const PORT = Number(process.env.PORT ?? process.env.MATCHPULSE_API_PORT ?? 8787)
 const HOST = process.env.HOST ?? '127.0.0.1'
 const dbUrl = new URL('./matchpulse-db.json', import.meta.url)
+const tempDbUrl = new URL('./matchpulse-db.json.tmp', import.meta.url)
 const serverDir = fileURLToPath(new URL('.', import.meta.url))
 const uploadsDir = join(serverDir, 'uploads')
 const distDir = join(serverDir, '..', 'dist')
 const openAiModel = process.env.OPENAI_MODEL ?? 'gpt-5-mini'
 const supabaseStateId = process.env.MATCHPULSE_STATE_ID ?? 'beta'
 const supabaseStorageBucket = process.env.MATCHPULSE_STORAGE_BUCKET ?? 'profile-photos'
+let mutationQueue = Promise.resolve()
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -498,8 +500,10 @@ async function loadDb() {
   }
 
   try {
-    return ensureDatabaseShape(JSON.parse(await readFile(dbUrl, 'utf8')))
-  } catch {
+    const content = await readFile(dbUrl, 'utf8')
+    return ensureDatabaseShape(JSON.parse(content))
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
     const db = createSeedDatabase()
     await saveDb(db)
     return db
@@ -549,7 +553,8 @@ async function saveDb(db) {
     }
   }
 
-  await writeFile(dbUrl, `${JSON.stringify(db, null, 2)}\n`)
+  await writeFile(tempDbUrl, `${JSON.stringify(db, null, 2)}\n`)
+  await rename(tempDbUrl, dbUrl)
 }
 
 function supabaseUrl() {
@@ -1813,7 +1818,14 @@ function requireSession(db, body, requestUrl) {
   return { sessionId, user }
 }
 
-async function route(request, response) {
+function shouldSerializeMutation(request, requestUrl) {
+  return (
+    requestUrl.pathname.startsWith('/api/') &&
+    !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+  )
+}
+
+async function routeCore(request, response) {
   if (request.method === 'OPTIONS') {
     send(response, 204, {})
     return
@@ -2571,6 +2583,18 @@ async function route(request, response) {
   } catch (error) {
     send(response, 500, { error: error.message })
   }
+}
+
+async function route(request, response) {
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`)
+  if (!shouldSerializeMutation(request, requestUrl)) {
+    await routeCore(request, response)
+    return
+  }
+
+  const runMutation = mutationQueue.then(() => routeCore(request, response))
+  mutationQueue = runMutation.catch(() => {})
+  await runMutation
 }
 
 createServer(route).listen(PORT, HOST, () => {
