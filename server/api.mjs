@@ -484,6 +484,7 @@ function createSeedDatabase() {
     datePlans: [],
     feedback: [],
     reports: [],
+    testerFeedback: [],
     blocks: {},
     briefings: [],
     consentEvents: [],
@@ -513,6 +514,7 @@ async function loadDb() {
 function ensureDatabaseShape(db) {
   db.feedback ??= []
   db.reports ??= []
+  db.testerFeedback ??= []
   db.blocks ??= {}
   db.briefings ??= []
   db.consentEvents ??= []
@@ -1192,6 +1194,7 @@ function softDeleteUser(db, user, sessionId = '') {
   db.messages = db.messages.filter((message) => message.userId !== user.id && message.matchId !== user.id)
   db.datePlans = db.datePlans.filter((plan) => plan.userId !== user.id && plan.matchId !== user.id)
   db.feedback = db.feedback.filter((feedback) => feedback.userId !== user.id && feedback.matchId !== user.id)
+  db.testerFeedback = (db.testerFeedback ?? []).filter((feedback) => feedback.userId !== user.id)
   db.reports = db.reports.filter((report) => report.userId !== user.id && report.matchId !== user.id)
   db.invites = db.invites.filter((invite) => invite.inviterId !== user.id && invite.acceptedBy !== user.id)
   db.consentEvents.push({
@@ -1721,6 +1724,18 @@ function buildBetaOverview(db, request) {
       type: feedback.type,
       createdAt: feedback.createdAt,
     }))
+  const latestTesterFeedback = [...db.testerFeedback]
+    .slice(-8)
+    .reverse()
+    .map((feedback) => ({
+      id: feedback.id,
+      user: displayNameForUser(db, feedback.userId),
+      surface: feedback.surface,
+      rating: feedback.rating,
+      issueType: feedback.issueType,
+      body: feedback.body,
+      createdAt: feedback.createdAt,
+    }))
 
   return {
     totals: {
@@ -1728,6 +1743,7 @@ function buildBetaOverview(db, request) {
       onboardedUsers: onboardedUsers.length,
       invitesAccepted: db.invites.length,
       feedback: db.feedback.length,
+      testerFeedback: db.testerFeedback.length,
       reports: db.reports.length,
       blocks: Object.values(db.blocks).reduce((total, list) => total + list.length, 0),
       briefings: db.briefings.length,
@@ -1735,6 +1751,7 @@ function buildBetaOverview(db, request) {
     },
     latestReports,
     latestFeedback,
+    latestTesterFeedback,
     latestBriefings: [...db.briefings]
       .slice(-5)
       .reverse()
@@ -1784,6 +1801,7 @@ function buildAppState(db, user, request) {
     plannedDates: db.datePlans.filter((plan) => plan.userId === user.id),
     messages: userMessages(db, user.id),
     feedback: db.feedback.filter((item) => item.userId === user.id),
+    testerFeedback: db.testerFeedback.filter((item) => item.userId === user.id),
     reports: db.reports.filter((item) => item.userId === user.id),
     briefings: db.briefings.filter((item) => item.userId === user.id).slice(-5).reverse(),
     providerStatus: providerStatus(request),
@@ -2491,6 +2509,43 @@ async function routeCore(request, response) {
           { visibility: 'match_ai', source: 'match-feedback' },
         )
       }
+      await saveDb(db)
+      send(response, 200, buildAppState(db, user, request))
+      return
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/api/tester-feedback') {
+      const body = await readJson(request)
+      const { user } = requireSession(db, body, requestUrl)
+      if (!user) return send(response, 401, { error: 'Session expired' })
+      const feedback = {
+        id: randomUUID(),
+        userId: user.id,
+        surface: String(body.surface ?? 'app').slice(0, 80),
+        rating: clamp(Number.parseInt(body.rating, 10) || 0, 1, 5),
+        issueType: [
+          'general',
+          'confusing',
+          'visual',
+          'bug',
+          'privacy',
+          'match_quality',
+          'performance',
+        ].includes(body.issueType) ? body.issueType : 'general',
+        body: String(body.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 1200),
+        metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
+        createdAt: now(),
+      }
+      if (!feedback.body) {
+        return send(response, 400, { error: 'Feedback cannot be empty' })
+      }
+      db.testerFeedback.push(feedback)
+      prependMemory(
+        db,
+        user.id,
+        `Tester feedback (${feedback.issueType}): ${feedback.body}`,
+        { visibility: 'match_ai', source: 'tester-feedback', limit: 12 },
+      )
       await saveDb(db)
       send(response, 200, buildAppState(db, user, request))
       return
