@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { matches, viewer } from '../src/data.js'
@@ -122,6 +122,35 @@ const betaTesterPersonas = [
 
 function now() {
   return new Date().toISOString()
+}
+
+function cleanBetaPin(value) {
+  return String(value ?? '').trim()
+}
+
+function betaPinError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Vul je beta-PIN in. Kies minstens 4 tekens zodat je later veilig kan terugkomen.'
+    : 'Add your beta PIN. Use at least 4 characters so you can come back safely.'
+}
+
+function betaPinMismatchError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Deze beta-PIN klopt niet voor dit profiel.'
+    : 'That beta PIN does not match this profile.'
+}
+
+function createBetaPinSecret(pin) {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(pin, salt, 32).toString('hex')
+  return { version: 'scrypt-v1', salt, hash, createdAt: now() }
+}
+
+function verifyBetaPin(secret, pin) {
+  if (!secret?.salt || !secret?.hash) return false
+  const expected = Buffer.from(secret.hash, 'hex')
+  const actual = scryptSync(pin, secret.salt, expected.length)
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
 }
 
 function slugify(value) {
@@ -1980,11 +2009,15 @@ async function routeCore(request, response) {
       const body = await readJson(request)
       const contact = body.contact ?? body.email ?? body.phone ?? ''
       const authMode = body.mode === 'login' ? 'login' : 'signup'
+      const provider = body.provider ?? 'Email'
+      const requiresBetaPin = provider === 'Email'
+      const betaPin = cleanBetaPin(body.betaPin)
+      const language = body.profile?.language
       let user = findUserByContact(db, contact)
       const isReturningUser = Boolean(user)
 
       if (!user && authMode === 'login') {
-        const isDutch = body.profile?.language === 'Nederlands'
+        const isDutch = language === 'Nederlands'
         send(response, 404, {
           error: isDutch
             ? 'Geen MatchPulse profiel gevonden voor deze e-mail of gsm. Kies Sign up om er een te maken.'
@@ -1994,19 +2027,35 @@ async function routeCore(request, response) {
         return
       }
 
+      if (requiresBetaPin && betaPin.length < 4) {
+        send(response, 400, { error: betaPinError(language), code: 'beta_pin_required' })
+        return
+      }
+
+      if (requiresBetaPin && authMode === 'login' && user && !user.authSecret?.betaPin) {
+        send(response, 401, { error: betaPinMismatchError(language), code: 'beta_pin_not_set' })
+        return
+      }
+
+      if (requiresBetaPin && user?.authSecret?.betaPin && !verifyBetaPin(user.authSecret.betaPin, betaPin)) {
+        send(response, 401, { error: betaPinMismatchError(language), code: 'beta_pin_mismatch' })
+        return
+      }
+
       if (!user) {
         const profile = applyDraftProfileHints(
           createDraftProfile(
             db.users.length + 1,
-            body.provider ?? 'Email',
+            provider,
             contact,
           ),
           body.profile,
         )
         user = {
           id: profile.id,
-          provider: body.provider ?? 'Email',
+          provider,
           profile,
+          authSecret: requiresBetaPin ? { betaPin: createBetaPinSecret(betaPin) } : undefined,
           inviteCode: createInviteCode(db, profile),
           invitedBy: body.inviteCode || '',
           onboarded: false,
@@ -2015,11 +2064,14 @@ async function routeCore(request, response) {
         db.users.push(user)
         ensureUserCollections(db, user.id)
       } else {
-        user.provider = body.provider ?? user.provider ?? 'Email'
+        user.provider = provider ?? user.provider ?? 'Email'
         user.profile = {
           ...user.profile,
           provider: user.provider,
           contact: contact || user.profile.contact,
+        }
+        if (requiresBetaPin && authMode === 'signup' && !user.authSecret?.betaPin) {
+          user.authSecret = { ...(user.authSecret ?? {}), betaPin: createBetaPinSecret(betaPin) }
         }
       }
       const session = { id: randomUUID(), userId: user.id, createdAt: now() }
