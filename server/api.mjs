@@ -598,6 +598,76 @@ async function supabaseRequest(path, options = {}) {
   return payload
 }
 
+async function checkSupabaseRelation({ id, table, select = 'id', label }) {
+  if (!useSupabaseState()) {
+    return {
+      id,
+      label,
+      ready: false,
+      detail: 'Supabase service is not configured on this runtime',
+    }
+  }
+
+  try {
+    await supabaseRequest(`/rest/v1/${table}?select=${encodeURIComponent(select)}&limit=1`)
+    return {
+      id,
+      label,
+      ready: true,
+      detail: `${table} reachable`,
+    }
+  } catch (error) {
+    return {
+      id,
+      label,
+      ready: false,
+      detail: error.message || `${table} is not reachable`,
+    }
+  }
+}
+
+async function supabaseSchemaStatus() {
+  const checks = await Promise.all([
+    checkSupabaseRelation({
+      id: 'stateSnapshot',
+      label: 'State snapshot table',
+      table: 'matchpulse_app_state',
+      select: 'id,updated_at',
+    }),
+    checkSupabaseRelation({
+      id: 'attentionSignals',
+      label: 'Attention learning table',
+      table: 'attention_signals',
+      select: 'user_id,signal_id,visibility,updated_at',
+    }),
+    checkSupabaseRelation({
+      id: 'testerFeedback',
+      label: 'Persistent tester feedback table',
+      table: 'tester_feedback',
+      select: 'id,client_id,user_id,surface,rating,issue_type,updated_at',
+    }),
+    checkSupabaseRelation({
+      id: 'matchScores',
+      label: 'Relational match scores table',
+      table: 'match_scores',
+      select: 'user_id,match_user_id,score,shared_neurons,updated_at',
+    }),
+    checkSupabaseRelation({
+      id: 'profileVisibilityConsents',
+      label: 'Profile visibility consent table',
+      table: 'profile_visibility_consents',
+      select: 'id,user_id,scope,visibility,allowed,updated_at',
+    }),
+  ])
+
+  return {
+    ok: checks.every((check) => check.ready),
+    provider: useSupabaseState() ? 'supabase' : 'local',
+    migration: '0005_relational_matchpulse_beta_core',
+    checks,
+  }
+}
+
 async function loadSupabaseState() {
   const rows = await supabaseRequest(
     `/rest/v1/matchpulse_app_state?id=eq.${encodeURIComponent(supabaseStateId)}&select=data`,
@@ -1167,6 +1237,23 @@ function isInternalTestUser(user) {
   )
 }
 
+function isCleanupTestUser(user) {
+  if (user?.isSeed || user?.provider === 'seed' || String(user?.id ?? '').startsWith('seed-')) return false
+
+  const profile = user?.profile ?? {}
+  const contactValues = [profile.email, profile.contact, profile.phone]
+    .map((value) => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+  const email = String(profile.email ?? '').trim().toLowerCase()
+
+  return (
+    isInternalTestUser(user) ||
+    contactValues.some((value) => value.endsWith('@matchpulse.test')) ||
+    /^alex\d+@matchpulse\.local$/i.test(email) ||
+    contactValues.some((value) => /^smoke\./i.test(value) && value.endsWith('@matchpulse.local'))
+  )
+}
+
 function softDeleteUser(db, user, sessionId = '') {
   if (!user || user.deletedAt) return false
   user.deletedAt = now()
@@ -1211,7 +1298,7 @@ function softDeleteUser(db, user, sessionId = '') {
 function cleanupInternalTestUsers(db, currentUserId) {
   const deletedNames = []
   db.users.forEach((user) => {
-    if (user.id === currentUserId || user.deletedAt || !isInternalTestUser(user)) return
+    if (user.id === currentUserId || user.deletedAt || !isCleanupTestUser(user)) return
     deletedNames.push(user.profile.name)
     softDeleteUser(db, user)
   })
@@ -1702,7 +1789,7 @@ function demoAutoReply(matchUser = {}, requesterProfile = {}, incomingText = '')
 function buildBetaOverview(db, request) {
   const activeUsers = db.users.filter((user) => !user.deletedAt)
   const onboardedUsers = activeUsers.filter((user) => user.onboarded)
-  const testAccounts = activeUsers.filter((user) => isInternalTestUser(user))
+  const testAccounts = activeUsers.filter((user) => isCleanupTestUser(user))
   const latestReports = [...db.reports]
     .slice(-8)
     .reverse()
@@ -1881,6 +1968,11 @@ async function routeCore(request, response) {
         onboarded: db.users.filter((user) => user.onboarded && !user.deletedAt).length,
         providerStatus: providerStatus(request),
       })
+      return
+    }
+
+    if (request.method === 'GET' && requestUrl.pathname === '/api/schema-status') {
+      send(response, 200, await supabaseSchemaStatus())
       return
     }
 
