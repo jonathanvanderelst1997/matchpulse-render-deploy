@@ -2518,8 +2518,13 @@ async function routeCore(request, response) {
       const body = await readJson(request)
       const { user } = requireSession(db, body, requestUrl)
       if (!user) return send(response, 401, { error: 'Session expired' })
+      const clientId = String(body.clientId ?? body.id ?? '').replace(/[^a-zA-Z0-9:_-]/g, '').slice(0, 96)
+      const existingFeedback = clientId
+        ? db.testerFeedback.find((item) => item.userId === user.id && item.clientId === clientId)
+        : null
       const feedback = {
-        id: randomUUID(),
+        id: existingFeedback?.id ?? randomUUID(),
+        clientId: clientId || existingFeedback?.clientId || '',
         userId: user.id,
         surface: String(body.surface ?? 'app').slice(0, 80),
         rating: clamp(Number.parseInt(body.rating, 10) || 0, 1, 5),
@@ -2533,19 +2538,28 @@ async function routeCore(request, response) {
           'performance',
         ].includes(body.issueType) ? body.issueType : 'general',
         body: String(body.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 1200),
-        metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
-        createdAt: now(),
+        metadata: {
+          ...(existingFeedback?.metadata ?? {}),
+          ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}),
+          ...(clientId ? { clientId } : {}),
+        },
+        createdAt: existingFeedback?.createdAt ?? now(),
+        updatedAt: now(),
       }
       if (!feedback.body) {
         return send(response, 400, { error: 'Feedback cannot be empty' })
       }
-      db.testerFeedback.push(feedback)
-      prependMemory(
-        db,
-        user.id,
-        `Tester feedback (${feedback.issueType}): ${feedback.body}`,
-        { visibility: 'match_ai', source: 'tester-feedback', limit: 12 },
-      )
+      if (existingFeedback) {
+        Object.assign(existingFeedback, feedback)
+      } else {
+        db.testerFeedback.push(feedback)
+        prependMemory(
+          db,
+          user.id,
+          `Tester feedback (${feedback.issueType}): ${feedback.body}`,
+          { visibility: 'match_ai', source: 'tester-feedback', limit: 12 },
+        )
+      }
       await saveDb(db)
       send(response, 200, buildAppState(db, user, request))
       return
