@@ -1803,11 +1803,13 @@ function providerStatus(request) {
         id: 'noRequiredEmailProvider',
         label: 'No paid email required',
         ready: !requiresEmailDelivery || hasEmail,
-        detail: hasEmail
+        detail: hasResendEmail
           ? 'Resend can run on its free tier for small tests'
-          : requiresEmailDelivery
-            ? 'Real email delivery is required; add RESEND_API_KEY and MATCHPULSE_FROM_EMAIL'
-            : 'Briefings are saved as local previews',
+          : hasSupabaseAuthEmail
+            ? 'Supabase Auth email handles low-volume beta verification; Resend stays the later upgrade'
+            : requiresEmailDelivery
+              ? 'Real email delivery is required; add Supabase Auth email or Resend'
+              : 'Briefings are saved as local previews',
       },
       {
         id: 'freeDatabasePath',
