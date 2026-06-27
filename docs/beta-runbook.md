@@ -29,8 +29,8 @@
 6. Add env vars from `.env.example`.
 7. Set `MATCHPULSE_DATA_PROVIDER=supabase` and `MATCHPULSE_STORAGE_PROVIDER=supabase`.
 8. Leave `OPENAI_API_KEY` empty for zero-cost local AI insight.
-9. Keep `MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=1`, `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=0`, and `MATCHPULSE_ALLOW_EMAIL_VERIFICATION_PREVIEW=1` for zero-cost beta verification.
-10. Configure `RESEND_API_KEY`, `MATCHPULSE_FROM_EMAIL`, and `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=1` only after a verified sender domain/SMTP is available.
+9. Keep `MATCHPULSE_EMAIL_PROVIDER=supabase`, `MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=1`, and `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=0` for low-volume zero-cost beta verification.
+10. Configure `MATCHPULSE_EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `MATCHPULSE_FROM_EMAIL`, and `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=1` only after a verified sender domain/SMTP is available.
 11. Deploy the app with the included `render.yaml` blueprint on Render Free.
 12. Set `MATCHPULSE_PUBLIC_URL` to the deployed URL.
 13. Run `MATCHPULSE_TEST_API=https://your-free-render-url.onrender.com npm run readiness:public-free` before inviting testers.

@@ -51,14 +51,14 @@ OPENAI_API_KEY=
 6. Deploy with Render Free using `render.yaml`.
 7. Add the required env vars in Render.
 8. Run `MATCHPULSE_TEST_API=https://your-free-render-url.onrender.com npm run readiness:public-free`.
-9. Create one account, verify it with the zero-cost preview link, complete onboarding, copy the invite link, and open it in a private browser to create another tester.
+9. Create one account, verify it with the Supabase Auth email, complete onboarding, copy the invite link, and open it in a private browser to create another tester.
 
 ## Limits To Respect
 
 - Render Free can sleep after inactivity, so first load can be slow.
 - Supabase Free has storage/database/auth limits; keep early beta small.
 - Local AI is deterministic and cheap, but not as nuanced as paid model calls.
-- Resend Free keeps early verification/reset email delivery cheap after a sender domain is verified; until then, zero-cost preview verification keeps beta signup unblocked.
+- Supabase Auth email is enough for very low-volume early beta verification. Resend stays the later upgrade after a sender domain is verified.
 
 ## Upgrade Later
 

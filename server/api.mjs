@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createClient } from '@supabase/supabase-js'
 import { matches, viewer } from '../src/data.js'
 
 const PORT = Number(process.env.PORT ?? process.env.MATCHPULSE_API_PORT ?? 8787)
@@ -16,6 +17,7 @@ const openAiModel = process.env.OPENAI_MODEL ?? 'gpt-5-mini'
 const supabaseStateId = process.env.MATCHPULSE_STATE_ID ?? 'beta'
 const supabaseStorageBucket = process.env.MATCHPULSE_STORAGE_BUCKET ?? 'profile-photos'
 let mutationQueue = Promise.resolve()
+let supabaseAuthClient
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -719,8 +721,60 @@ function useResendEmail() {
   return Boolean(process.env.RESEND_API_KEY && process.env.MATCHPULSE_FROM_EMAIL)
 }
 
+function useSupabaseAuthEmail() {
+  if (process.env.MATCHPULSE_EMAIL_PROVIDER === 'local-preview') return false
+  if (process.env.MATCHPULSE_EMAIL_PROVIDER === 'resend') return false
+  return Boolean(
+    process.env.SUPABASE_URL &&
+      process.env.SUPABASE_ANON_KEY &&
+      (process.env.MATCHPULSE_EMAIL_PROVIDER === 'supabase' || process.env.MATCHPULSE_PUBLIC_URL),
+  )
+}
+
+function shouldUseSupabaseSignupEmail(contact) {
+  const normalized = normalizeContact(contact)
+  return Boolean(useSupabaseAuthEmail() && normalized.email && !normalized.email.endsWith('@matchpulse.local'))
+}
+
 function isEmailDeliveryRequired() {
   return process.env.MATCHPULSE_REQUIRE_EMAIL_DELIVERY === '1' || (isEmailVerificationRequired() && !allowEmailVerificationPreviewFallback())
+}
+
+function getSupabaseAuthClient() {
+  if (!supabaseAuthClient) {
+    supabaseAuthClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false,
+      },
+    })
+  }
+  return supabaseAuthClient
+}
+
+async function sendSupabaseSignupVerificationEmail({ contact, password, request, user }) {
+  if (!shouldUseSupabaseSignupEmail(contact) || !password || !request) {
+    return { provider: 'local-preview', delivered: false }
+  }
+
+  const redirectUrl = new URL(getOrigin(request))
+  redirectUrl.searchParams.set('authCallback', '1')
+
+  const { data, error } = await getSupabaseAuthClient().auth.signUp({
+    email: contact,
+    password,
+    options: {
+      emailRedirectTo: redirectUrl.toString(),
+      data: {
+        matchpulseUserId: user.id,
+        matchpulseInviteCode: user.inviteCode,
+      },
+    },
+  })
+
+  if (error) throw new Error(error.message)
+  return { provider: 'supabase-auth', delivered: true, id: data?.user?.id }
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
@@ -790,7 +844,7 @@ async function sendPasswordResetEmail(db, user, contact, resetUrl) {
   return delivery
 }
 
-async function sendSignupVerificationEmail(db, user, contact, verificationUrl) {
+async function sendSignupVerificationEmail(db, user, contact, verificationUrl, options = {}) {
   const safeUrl = escapeHtml(verificationUrl)
   const subject = 'Verify your MatchPulse account'
   const text = [
@@ -808,9 +862,19 @@ async function sendSignupVerificationEmail(db, user, contact, verificationUrl) {
   let delivery = { provider: 'local-preview', delivered: false }
 
   try {
-    delivery = await sendTransactionalEmail({ to: contact, subject, html, text })
+    delivery = useResendEmail()
+      ? await sendTransactionalEmail({ to: contact, subject, html, text })
+      : await sendSupabaseSignupVerificationEmail({
+          contact,
+          password: options.password,
+          request: options.request,
+          user,
+        })
   } catch (error) {
-    delivery = { provider: 'resend', delivered: false, error: error.message }
+    const provider = useResendEmail() ? 'resend' : 'supabase-auth'
+    delivery = allowEmailVerificationPreviewFallback()
+      ? { provider: 'local-preview', delivered: false, error: `${provider}: ${error.message}` }
+      : { provider, delivered: false, error: error.message }
   }
 
   db.authEmails.push({
@@ -1709,7 +1773,9 @@ function providerStatus(request) {
   const hasSupabaseState = useSupabaseState()
   const hasSupabasePhotoStorage = useSupabaseStorage()
   const hasOpenAi = Boolean(process.env.OPENAI_API_KEY)
-  const hasEmail = useResendEmail()
+  const hasResendEmail = useResendEmail()
+  const hasSupabaseAuthEmail = useSupabaseAuthEmail()
+  const hasEmail = hasResendEmail || hasSupabaseAuthEmail
   const requiresEmailDelivery = isEmailDeliveryRequired()
   const requiresEmailVerification = isEmailVerificationRequired()
   const paidServices = [
@@ -1724,7 +1790,7 @@ function providerStatus(request) {
     database: hasSupabaseState ? 'supabase-state' : 'local-json',
     auth: hasSupabaseProject ? 'supabase-oauth-ready' : 'local-simulated',
     ai: hasOpenAi ? `openai:${openAiModel}` : 'local-heuristic',
-    email: hasEmail ? 'resend-ready' : 'local-preview',
+    email: hasResendEmail ? 'resend-ready' : hasSupabaseAuthEmail ? 'supabase-auth-email' : 'local-preview',
     storage: hasSupabasePhotoStorage ? 'supabase-storage' : 'local-file-uploads',
     costChecklist: [
       {
@@ -1795,22 +1861,26 @@ function providerStatus(request) {
         id: 'email',
         label: 'Transactional email',
         ready: !requiresEmailDelivery || hasEmail,
-        detail: hasEmail
+        detail: hasResendEmail
           ? 'Resend env detected for verification, reset, and briefings'
-          : requiresEmailDelivery
-            ? 'Real email is required but Resend env is missing'
-            : 'Preview is saved locally, no email provider required',
+          : hasSupabaseAuthEmail
+            ? 'Supabase Auth email is used for low-volume signup verification'
+            : requiresEmailDelivery
+              ? 'Real email is required but Supabase/Resend email is missing'
+              : 'Preview is saved locally, no email provider required',
       },
       {
         id: 'emailVerification',
         label: 'Email verification gate',
         ready: !requiresEmailVerification || hasEmail || allowEmailVerificationPreviewFallback(),
         detail: requiresEmailVerification
-          ? hasEmail
-            ? 'Signup verification is enforced and real email delivery is configured'
-            : allowEmailVerificationPreviewFallback()
-              ? 'Signup verification is enforced with zero-cost preview links until a verified email domain is available'
-              : 'Signup verification is enforced but real email delivery is missing'
+          ? hasResendEmail
+            ? 'Signup verification is enforced and Resend delivery is configured'
+            : hasSupabaseAuthEmail
+              ? 'Signup verification is enforced through Supabase Auth email for low-volume beta'
+              : allowEmailVerificationPreviewFallback()
+                ? 'Signup verification is enforced with zero-cost preview links until a verified email domain is available'
+                : 'Signup verification is enforced but real email delivery is missing'
           : 'Signup verification is optional for this environment',
       },
       {
@@ -2564,7 +2634,7 @@ async function routeCore(request, response) {
             },
           }
           const verificationUrl = `${getOrigin(request)}/?verifyToken=${encodeURIComponent(verificationToken)}&verifyContact=${encodeURIComponent(profileContact.email)}`
-          const delivery = await sendSignupVerificationEmail(db, user, profileContact.email, verificationUrl)
+          const delivery = await sendSignupVerificationEmail(db, user, profileContact.email, verificationUrl, { password, request })
           db.consentEvents.push({
             id: randomUUID(),
             userId: user.id,
@@ -2612,7 +2682,9 @@ async function routeCore(request, response) {
     if (request.method === 'POST' && requestUrl.pathname === '/api/auth/supabase') {
       const body = await readJson(request)
       const authUser = await verifySupabaseAccessToken(body.accessToken)
+      const authContact = normalizeContact(authUser.email || authUser.phone || '')
       let user = db.users.find((candidate) => candidate.authUserId === authUser.id || candidate.id === authUser.id)
+      if (!user && authContact.email) user = findUserByContact(db, authContact.email)
       const isNewUser = !user
 
       if (!user) {
@@ -2632,9 +2704,31 @@ async function routeCore(request, response) {
       } else {
         user.authUserId = authUser.id
         user.provider = authUser.app_metadata?.provider ?? user.provider ?? 'Supabase'
+        const verification = user.authSecret?.emailVerification
+        if (authContact.email && verification && !verification.usedAt) {
+          user.authSecret = {
+            ...(user.authSecret ?? {}),
+            emailVerification: {
+              ...verification,
+              usedAt: now(),
+            },
+          }
+          user.profile = {
+            ...user.profile,
+            emailVerified: true,
+          }
+          db.consentEvents.push({
+            id: randomUUID(),
+            userId: user.id,
+            type: 'email_verified',
+            provider: 'supabase-auth',
+            createdAt: now(),
+          })
+        }
         user.profile = {
           ...user.profile,
           email: authUser.email ?? user.profile.email,
+          contact: authUser.email ?? user.profile.contact,
           provider: user.provider,
         }
       }

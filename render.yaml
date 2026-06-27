@@ -22,6 +22,8 @@ services:
         sync: false
       - key: MATCHPULSE_FROM_EMAIL
         sync: false
+      - key: MATCHPULSE_EMAIL_PROVIDER
+        value: supabase
       - key: MATCHPULSE_DATA_PROVIDER
         value: supabase
       - key: MATCHPULSE_STORAGE_PROVIDER
