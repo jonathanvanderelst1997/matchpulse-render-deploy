@@ -82,8 +82,8 @@ MatchPulse is configured to run without paid APIs:
 - Configure Google/Apple providers in Supabase Auth and set both `SUPABASE_*` and `VITE_SUPABASE_*` env vars.
 - Deploy the app and set `MATCHPULSE_PUBLIC_URL`.
 - Keep `OPENAI_API_KEY` empty for zero-cost local AI.
-- For real public beta email confirmation, set `RESEND_API_KEY`, `MATCHPULSE_FROM_EMAIL`, `MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=1`, and `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=1`.
-- Keep `MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=0` and `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=0` only for local preview-only testing.
+- For zero-cost beta confirmation, keep `MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=1`, `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=0`, and `MATCHPULSE_ALLOW_EMAIL_VERIFICATION_PREVIEW=1`.
+- For real mailbox delivery later, add a verified sender domain/SMTP, set `RESEND_API_KEY`, `MATCHPULSE_FROM_EMAIL`, and switch `MATCHPULSE_REQUIRE_EMAIL_DELIVERY=1`.
 - Add moderation dashboard workflows for report review.
 - Evaluate match scoring quality with real beta feedback.
 

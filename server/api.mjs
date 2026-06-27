@@ -247,7 +247,12 @@ function emailVerificationExpiry() {
 }
 
 function isEmailVerificationRequired() {
-  return process.env.MATCHPULSE_REQUIRE_EMAIL_VERIFICATION === '1'
+  if (process.env.MATCHPULSE_REQUIRE_EMAIL_VERIFICATION === '0') return false
+  return process.env.MATCHPULSE_REQUIRE_EMAIL_VERIFICATION === '1' || Boolean(process.env.MATCHPULSE_PUBLIC_URL)
+}
+
+function allowEmailVerificationPreviewFallback() {
+  return process.env.MATCHPULSE_ALLOW_EMAIL_VERIFICATION_PREVIEW !== '0' && process.env.MATCHPULSE_REQUIRE_EMAIL_DELIVERY !== '1'
 }
 
 function isFutureIso(value) {
@@ -715,7 +720,7 @@ function useResendEmail() {
 }
 
 function isEmailDeliveryRequired() {
-  return process.env.MATCHPULSE_REQUIRE_EMAIL_DELIVERY === '1' || isEmailVerificationRequired()
+  return process.env.MATCHPULSE_REQUIRE_EMAIL_DELIVERY === '1' || (isEmailVerificationRequired() && !allowEmailVerificationPreviewFallback())
 }
 
 async function sendTransactionalEmail({ to, subject, html, text }) {
@@ -1174,11 +1179,17 @@ async function verifySupabaseAccessToken(accessToken) {
 
 function authStartPayload(db, user, session, request, meta = {}) {
   const rawEmailVerification = user.authSecret?.emailVerification
+  const verificationEmail = rawEmailVerification
+    ? [...db.authEmails].reverse().find((email) => email.userId === user.id && email.type === 'email_verification')
+    : null
   const emailVerification = rawEmailVerification
     ? {
         status: rawEmailVerification.usedAt ? 'verified' : 'pending',
         expiresAt: rawEmailVerification.expiresAt,
         required: isEmailVerificationRequired(),
+        provider: verificationEmail?.provider ?? (useResendEmail() ? 'resend' : 'local-preview'),
+        delivered: Boolean(verificationEmail?.delivered),
+        previewUrl: verificationEmail?.provider === 'local-preview' ? verificationEmail.previewUrl : '',
       }
     : { status: 'not_available', required: isEmailVerificationRequired() }
 
@@ -1793,11 +1804,13 @@ function providerStatus(request) {
       {
         id: 'emailVerification',
         label: 'Email verification gate',
-        ready: !requiresEmailVerification || hasEmail,
+        ready: !requiresEmailVerification || hasEmail || allowEmailVerificationPreviewFallback(),
         detail: requiresEmailVerification
           ? hasEmail
             ? 'Signup verification is enforced and real email delivery is configured'
-            : 'Signup verification is enforced but emails are local previews only'
+            : allowEmailVerificationPreviewFallback()
+              ? 'Signup verification is enforced with zero-cost preview links until a verified email domain is available'
+              : 'Signup verification is enforced but real email delivery is missing'
           : 'Signup verification is optional for this environment',
       },
       {

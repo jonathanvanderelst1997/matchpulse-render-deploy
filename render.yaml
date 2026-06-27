@@ -33,4 +33,6 @@ services:
       - key: MATCHPULSE_REQUIRE_EMAIL_VERIFICATION
         value: "1"
       - key: MATCHPULSE_REQUIRE_EMAIL_DELIVERY
+        value: "0"
+      - key: MATCHPULSE_ALLOW_EMAIL_VERIFICATION_PREVIEW
         value: "1"

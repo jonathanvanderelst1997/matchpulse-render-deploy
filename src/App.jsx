@@ -197,6 +197,8 @@ const authCopy = {
       resetSent: 'Check your email for a secure reset link.',
       resetComplete: 'Password updated. Welcome back.',
       verificationSent: 'A verification email was sent. Open it to confirm your account.',
+      verificationPreview: 'Email verification is required. Free beta mode is showing a secure verification link here until real mailbox delivery is connected.',
+      verificationPreviewCta: 'Confirm account now',
       verificationComplete: 'Your account is verified. You can now sign in and continue.',
       verificationMissingToken: 'This verification link is missing or invalid.',
       verificationRequired: 'Please verify your email before signing in.',
@@ -352,6 +354,8 @@ const authCopy = {
       resetSent: 'Check je e-mail voor een veilige resetlink.',
       resetComplete: 'Wachtwoord aangepast. Welkom terug.',
       verificationSent: 'Verificatie e-mail verstuurd. Open de link om je account te bevestigen.',
+      verificationPreview: 'E-mailverificatie is verplicht. Gratis beta-modus toont hier tijdelijk een veilige verificatielink tot echte mailbox-delivery gekoppeld is.',
+      verificationPreviewCta: 'Account nu bevestigen',
       verificationComplete: 'Je account is geverifieerd. Je kunt nu inloggen en doorgaan.',
       verificationMissingToken: 'Deze verificatielink ontbreekt of is ongeldig.',
       verificationRequired: 'Verifieer eerst je e-mail om in te loggen.',
@@ -2001,6 +2005,7 @@ function App() {
   const [authResetSent, setAuthResetSent] = useState(false)
   const [resetToken, setResetToken] = useState(() => initialAuthState.resetParams.token)
   const [emailVerificationParams, setEmailVerificationParams] = useState(() => initialAuthState.emailVerificationParams)
+  const [emailVerificationPreview, setEmailVerificationPreview] = useState('')
   const [authMode, setAuthMode] = useState(() => initialAuthState.resetParams.token ? 'reset' : storedOnboarding?.mode ?? 'login')
   const [authContactFocusSignal, setAuthContactFocusSignal] = useState(0)
   const [orientation, setOrientation] = useState(profileInterest(viewer))
@@ -2777,8 +2782,12 @@ function App() {
         lookingFor: onboardingDraft.lookingFor,
       }, mode, { password, passwordConfirm: authPasswordConfirm })
       const verificationPending = session.emailVerification?.status === 'pending' && mode === 'signup' && provider === 'Email'
+      const verificationPreviewUrl = verificationPending ? (session.emailVerification?.previewUrl ?? '') : ''
+      setEmailVerificationPreview(verificationPreviewUrl)
       if (verificationPending && session.emailVerification?.required) {
-        const message = authText(onboardingDraft.language).login.verificationSent
+        const message = verificationPreviewUrl
+          ? authText(onboardingDraft.language).login.verificationPreview
+          : authText(onboardingDraft.language).login.verificationSent
         setAuthProvider(provider)
         setServerInviteLink(session.inviteLink)
         setAuthModeWithReset('login', { keepContact: true })
@@ -2788,6 +2797,7 @@ function App() {
       }
 
       setAuthProvider(provider)
+      setEmailVerificationPreview('')
       setSessionId(session.sessionId)
       setAuthPassword('')
       setAuthPasswordConfirm('')
@@ -3923,6 +3933,13 @@ function AuthExperience({
                     : copy.login.signupBody}
               </span>
               {apiError ? <p className="auth-error">{apiError}</p> : null}
+              {emailVerificationPreview ? (
+                <div className="auth-verification-preview">
+                  <ShieldCheck size={17} />
+                  <span>{copy.login.verificationPreview}</span>
+                  <a href={emailVerificationPreview}>{copy.login.verificationPreviewCta}</a>
+                </div>
+              ) : null}
               {!isPasswordReset ? (
                 <div className="auth-mode-switch" aria-label="Choose login or sign up">
                   {[

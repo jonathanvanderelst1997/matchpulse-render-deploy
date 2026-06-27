@@ -330,6 +330,37 @@ button {
   text-transform: none !important;
 }
 
+.auth-verification-preview {
+  max-width: 680px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(122, 198, 171, 0.32);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(122, 198, 171, 0.1);
+  color: #405454;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.auth-verification-preview svg {
+  color: var(--mint-strong);
+}
+
+.auth-verification-preview a {
+  border-radius: 999px;
+  padding: 8px 11px;
+  color: #fff;
+  background: var(--mint-strong);
+  font-size: 12px;
+  font-weight: 850;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .auth-provider-list {
   display: grid;
   gap: 12px;
