@@ -124,33 +124,135 @@ function now() {
   return new Date().toISOString()
 }
 
-function cleanBetaPin(value) {
-  return String(value ?? '').trim()
+function cleanPassword(value) {
+  return String(value ?? '')
 }
 
-function betaPinError(language = 'English') {
-  return language === 'Nederlands'
-    ? 'Vul je beta-PIN in. Kies minstens 4 tekens zodat je later veilig kan terugkomen.'
-    : 'Add your beta PIN. Use at least 4 characters so you can come back safely.'
+function passwordPolicyIssues(password) {
+  const issues = []
+  if (password.length < 8) issues.push('length')
+  if (!/[A-Za-zÀ-ÖØ-öø-ÿ]/.test(password)) issues.push('letter')
+  if (!/\d/.test(password)) issues.push('number')
+  if (password.length > 128) issues.push('max')
+  return issues
 }
 
-function betaPinMismatchError(language = 'English') {
+function passwordPolicyError(language = 'English') {
   return language === 'Nederlands'
-    ? 'Deze beta-PIN klopt niet voor dit profiel.'
-    : 'That beta PIN does not match this profile.'
+    ? 'Kies een wachtwoord van minstens 8 tekens met minstens 1 letter en 1 cijfer.'
+    : 'Choose a password with at least 8 characters, including 1 letter and 1 number.'
+}
+
+function passwordMismatchError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'De twee wachtwoorden komen niet overeen.'
+    : 'The two passwords do not match.'
+}
+
+function passwordRequiredError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Vul eerst je wachtwoord in.'
+    : 'Add your password first.'
+}
+
+function invalidCredentialsError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'E-mail/gsm of wachtwoord klopt niet.'
+    : 'Email/mobile or password is not correct.'
+}
+
+function resetRequestedMessage(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Als dit account bestaat, sturen we een veilige resetlink naar dat e-mailadres.'
+    : 'If this account exists, we will send a secure reset link to that email address.'
+}
+
+function invalidResetTokenError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Deze resetlink is ongeldig of verlopen. Vraag een nieuwe resetlink aan.'
+    : 'This reset link is invalid or expired. Request a new reset link.'
+}
+
+function emailVerifiedMessage(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Je account is nu geverifieerd. Je kunt nu inloggen.'
+    : 'Your account is now verified. You can sign in now.'
+}
+
+function alreadyVerifiedMessage(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Deze e-mail is al geverifieerd.'
+    : 'This email has already been verified.'
+}
+
+function invalidVerificationTokenError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Deze verificatielink is ongeldig of verlopen.'
+    : 'This verification link is invalid or expired.'
+}
+
+function verificationPendingError(language = 'English') {
+  return language === 'Nederlands'
+    ? 'Eerst je e-mail bevestigen om in te loggen.'
+    : 'Verify your email first before you can sign in.'
+}
+
+function createScryptSecret(value, purpose = 'password') {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(value, salt, 32).toString('hex')
+  return { version: 'scrypt-v1', purpose, salt, hash, createdAt: now() }
+}
+
+function verifyScryptSecret(secret, value) {
+  if (!secret?.salt || !secret?.hash) return false
+  const expected = Buffer.from(secret.hash, 'hex')
+  const actual = scryptSync(value, secret.salt, expected.length)
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
+}
+
+function createPasswordSecret(password) {
+  return createScryptSecret(password, 'password')
+}
+
+function verifyPasswordSecret(secret, password) {
+  return verifyScryptSecret(secret, password)
 }
 
 function createBetaPinSecret(pin) {
-  const salt = randomBytes(16).toString('hex')
-  const hash = scryptSync(pin, salt, 32).toString('hex')
-  return { version: 'scrypt-v1', salt, hash, createdAt: now() }
+  return createScryptSecret(pin, 'legacy-beta-pin')
 }
 
 function verifyBetaPin(secret, pin) {
-  if (!secret?.salt || !secret?.hash) return false
-  const expected = Buffer.from(secret.hash, 'hex')
-  const actual = scryptSync(pin, secret.salt, expected.length)
-  return expected.length === actual.length && timingSafeEqual(expected, actual)
+  return verifyScryptSecret(secret, pin)
+}
+
+function validateSignupPassword(password, passwordConfirm, language = 'English') {
+  if (passwordPolicyIssues(password).length) {
+    return { error: passwordPolicyError(language), code: 'password_policy' }
+  }
+
+  if (password !== passwordConfirm) {
+    return { error: passwordMismatchError(language), code: 'password_mismatch' }
+  }
+
+  return null
+}
+
+function passwordResetExpiry() {
+  return new Date(Date.now() + 30 * 60 * 1000).toISOString()
+}
+
+function emailVerificationExpiry() {
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+}
+
+function isEmailVerificationRequired() {
+  return process.env.MATCHPULSE_REQUIRE_EMAIL_VERIFICATION === '1'
+}
+
+function isFutureIso(value) {
+  const time = Date.parse(value)
+  return Number.isFinite(time) && time > Date.now()
 }
 
 function slugify(value) {
@@ -516,6 +618,7 @@ function createSeedDatabase() {
     testerFeedback: [],
     blocks: {},
     briefings: [],
+    authEmails: [],
     consentEvents: [],
   }
 }
@@ -546,6 +649,7 @@ function ensureDatabaseShape(db) {
   db.testerFeedback ??= []
   db.blocks ??= {}
   db.briefings ??= []
+  db.authEmails ??= []
   db.consentEvents ??= []
   db.invites ??= []
   db.messages ??= []
@@ -604,6 +708,122 @@ function useSupabaseStorage() {
     process.env.MATCHPULSE_STORAGE_PROVIDER === 'supabase' &&
     Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
   )
+}
+
+function useResendEmail() {
+  return Boolean(process.env.RESEND_API_KEY && process.env.MATCHPULSE_FROM_EMAIL)
+}
+
+function isEmailDeliveryRequired() {
+  return process.env.MATCHPULSE_REQUIRE_EMAIL_DELIVERY === '1' || isEmailVerificationRequired()
+}
+
+async function sendTransactionalEmail({ to, subject, html, text }) {
+  if (!useResendEmail()) return { provider: 'local-preview', delivered: false }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: process.env.MATCHPULSE_FROM_EMAIL,
+      to: [to],
+      subject,
+      html,
+      text,
+    }),
+  })
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(payload?.message ?? payload?.error ?? `Email send failed: ${response.status}`)
+  }
+
+  return { provider: 'resend', delivered: true, id: payload?.id }
+}
+
+async function sendPasswordResetEmail(db, user, contact, resetUrl) {
+  const safeUrl = escapeHtml(resetUrl)
+  const subject = 'Reset your MatchPulse password'
+  const text = [
+    'Reset your MatchPulse password',
+    '',
+    `Open this secure link within 30 minutes: ${resetUrl}`,
+    '',
+    'If you did not request this, you can ignore this email.',
+  ].join('\n')
+  const html = `
+    <p>Reset your MatchPulse password</p>
+    <p><a href="${safeUrl}">Open your secure reset link</a>. This link expires in 30 minutes.</p>
+    <p>If you did not request this, you can ignore this email.</p>
+  `
+  let delivery = { provider: 'local-preview', delivered: false }
+
+  try {
+    delivery = await sendTransactionalEmail({ to: contact, subject, html, text })
+  } catch (error) {
+    delivery = { provider: 'resend', delivered: false, error: error.message }
+  }
+
+  db.authEmails.push({
+    id: randomUUID(),
+    userId: user.id,
+    to: contact,
+    type: 'password_reset',
+    subject,
+    provider: delivery.provider,
+    delivered: Boolean(delivery.delivered),
+    previewUrl: delivery.provider === 'local-preview' ? resetUrl : '',
+    previewText: delivery.provider === 'local-preview' ? text : '',
+    providerMessageId: delivery.id,
+    error: delivery.error,
+    createdAt: now(),
+  })
+
+  return delivery
+}
+
+async function sendSignupVerificationEmail(db, user, contact, verificationUrl) {
+  const safeUrl = escapeHtml(verificationUrl)
+  const subject = 'Verify your MatchPulse account'
+  const text = [
+    'Welcome to MatchPulse',
+    '',
+    `Open this secure link to verify your account: ${verificationUrl}`,
+    '',
+    'If you did not sign up for MatchPulse, you can ignore this email.',
+  ].join('\n')
+  const html = `
+    <p>Welcome to MatchPulse</p>
+    <p><a href="${safeUrl}">Verify your email</a>. This link expires in 24 hours.</p>
+    <p>If you did not sign up for MatchPulse, you can ignore this email.</p>
+  `
+  let delivery = { provider: 'local-preview', delivered: false }
+
+  try {
+    delivery = await sendTransactionalEmail({ to: contact, subject, html, text })
+  } catch (error) {
+    delivery = { provider: 'resend', delivered: false, error: error.message }
+  }
+
+  db.authEmails.push({
+    id: randomUUID(),
+    userId: user.id,
+    to: contact,
+    type: 'email_verification',
+    subject,
+    provider: delivery.provider,
+    delivered: Boolean(delivery.delivered),
+    previewUrl: delivery.provider === 'local-preview' ? verificationUrl : '',
+    previewText: delivery.provider === 'local-preview' ? text : '',
+    providerMessageId: delivery.id,
+    error: delivery.error,
+    createdAt: now(),
+  })
+
+  return delivery
 }
 
 async function supabaseRequest(path, options = {}) {
@@ -866,6 +1086,7 @@ function createDraftProfile(userNumber, provider, contact = '') {
     fullName: `Alex ${userNumber}`,
     email: contactInfo.email || fallbackEmail,
     phone: contactInfo.phone,
+    emailVerified: false,
     language: viewer.language,
     contact: contactInfo.contact,
     provider,
@@ -952,12 +1173,22 @@ async function verifySupabaseAccessToken(accessToken) {
 }
 
 function authStartPayload(db, user, session, request, meta = {}) {
+  const rawEmailVerification = user.authSecret?.emailVerification
+  const emailVerification = rawEmailVerification
+    ? {
+        status: rawEmailVerification.usedAt ? 'verified' : 'pending',
+        expiresAt: rawEmailVerification.expiresAt,
+        required: isEmailVerificationRequired(),
+      }
+    : { status: 'not_available', required: isEmailVerificationRequired() }
+
   return {
     sessionId: session.id,
     profile: withDatingDefaults(user.profile),
     photos: [user.profile.photo].filter(Boolean),
     inviteLink: `${getOrigin(request)}/?invite=${user.inviteCode}`,
     onboarded: Boolean(user.onboarded),
+    emailVerification,
     accountStatus: meta.isReturningUser ? 'existing' : 'new',
   }
 }
@@ -1467,7 +1698,9 @@ function providerStatus(request) {
   const hasSupabaseState = useSupabaseState()
   const hasSupabasePhotoStorage = useSupabaseStorage()
   const hasOpenAi = Boolean(process.env.OPENAI_API_KEY)
-  const hasEmail = Boolean(process.env.RESEND_API_KEY && process.env.MATCHPULSE_FROM_EMAIL)
+  const hasEmail = useResendEmail()
+  const requiresEmailDelivery = isEmailDeliveryRequired()
+  const requiresEmailVerification = isEmailVerificationRequired()
   const paidServices = [
     hasOpenAi ? 'OpenAI API' : '',
   ].filter(Boolean)
@@ -1492,8 +1725,12 @@ function providerStatus(request) {
       {
         id: 'noRequiredEmailProvider',
         label: 'No paid email required',
-        ready: true,
-        detail: hasEmail ? 'Resend can run on its free tier for small tests' : 'Briefings are saved as local previews',
+        ready: !requiresEmailDelivery || hasEmail,
+        detail: hasEmail
+          ? 'Resend can run on its free tier for small tests'
+          : requiresEmailDelivery
+            ? 'Real email delivery is required; add RESEND_API_KEY and MATCHPULSE_FROM_EMAIL'
+            : 'Briefings are saved as local previews',
       },
       {
         id: 'freeDatabasePath',
@@ -1545,9 +1782,23 @@ function providerStatus(request) {
       },
       {
         id: 'email',
-        label: 'Sunday briefing email',
-        ready: true,
-        detail: hasEmail ? 'Resend env detected' : 'Preview is saved locally, no email provider required',
+        label: 'Transactional email',
+        ready: !requiresEmailDelivery || hasEmail,
+        detail: hasEmail
+          ? 'Resend env detected for verification, reset, and briefings'
+          : requiresEmailDelivery
+            ? 'Real email is required but Resend env is missing'
+            : 'Preview is saved locally, no email provider required',
+      },
+      {
+        id: 'emailVerification',
+        label: 'Email verification gate',
+        ready: !requiresEmailVerification || hasEmail,
+        detail: requiresEmailVerification
+          ? hasEmail
+            ? 'Signup verification is enforced and real email delivery is configured'
+            : 'Signup verification is enforced but emails are local previews only'
+          : 'Signup verification is optional for this environment',
       },
       {
         id: 'publicInvite',
@@ -1815,6 +2066,31 @@ function demoAutoReply(matchUser = {}, requesterProfile = {}, incomingText = '')
   return `I like that opener, ${name}. That shared signal (${cleanSignal}) feels worth exploring. Coffee sounds easy.`
 }
 
+function authEmailForClient(email = {}, { includePreview = false } = {}) {
+  return {
+    id: email.id,
+    type: email.type,
+    to: email.to,
+    subject: email.subject,
+    provider: email.provider,
+    delivered: Boolean(email.delivered),
+    previewUrl: includePreview && email.provider === 'local-preview' ? email.previewUrl : '',
+    error: email.error,
+    createdAt: email.createdAt,
+  }
+}
+
+function emailVerificationIsPending(user = {}) {
+  const contact = normalizeContact(user.profile?.email || user.profile?.contact)
+  const verification = user.authSecret?.emailVerification
+  return Boolean(
+    isEmailVerificationRequired() &&
+      contact.email &&
+      verification &&
+      !verification.usedAt,
+  )
+}
+
 function buildBetaOverview(db, request) {
   const activeUsers = db.users.filter((user) => !user.deletedAt)
   const onboardedUsers = activeUsers.filter((user) => user.onboarded)
@@ -1863,6 +2139,7 @@ function buildBetaOverview(db, request) {
       reports: db.reports.length,
       blocks: Object.values(db.blocks).reduce((total, list) => total + list.length, 0),
       briefings: db.briefings.length,
+      authEmails: db.authEmails.length,
       testAccounts: testAccounts.length,
     },
     latestReports,
@@ -1879,6 +2156,10 @@ function buildBetaOverview(db, request) {
         topMatch: briefing.topMatches?.[0]?.name ?? 'No match yet',
         createdAt: briefing.createdAt,
       })),
+    latestAuthEmails: [...db.authEmails]
+      .slice(-8)
+      .reverse()
+      .map((email) => authEmailForClient(email)),
     providerStatus: providerStatus(request),
   }
 }
@@ -1920,6 +2201,11 @@ function buildAppState(db, user, request) {
     testerFeedback: db.testerFeedback.filter((item) => item.userId === user.id),
     reports: db.reports.filter((item) => item.userId === user.id),
     briefings: db.briefings.filter((item) => item.userId === user.id).slice(-5).reverse(),
+    authEmails: db.authEmails
+      .filter((item) => item.userId === user.id)
+      .slice(-5)
+      .reverse()
+      .map((email) => authEmailForClient(email, { includePreview: true })),
     providerStatus: providerStatus(request),
     betaOverview: buildBetaOverview(db, request),
   }
@@ -2005,40 +2291,232 @@ async function routeCore(request, response) {
       return
     }
 
+    if (request.method === 'POST' && requestUrl.pathname === '/api/auth/password-reset/start') {
+      const body = await readJson(request)
+      const contact = body.contact ?? body.email ?? ''
+      const language = body.language
+      const contactInfo = normalizeContact(contact)
+      const user = contactInfo.email ? findUserByContact(db, contactInfo.email) : null
+
+      if (user) {
+        const resetToken = randomBytes(32).toString('hex')
+        user.authSecret = {
+          ...(user.authSecret ?? {}),
+          passwordReset: {
+            ...createScryptSecret(resetToken, 'password-reset'),
+            expiresAt: passwordResetExpiry(),
+            usedAt: '',
+          },
+        }
+        const resetUrl = `${getOrigin(request)}/?resetToken=${encodeURIComponent(resetToken)}&resetContact=${encodeURIComponent(contactInfo.email)}`
+        const delivery = await sendPasswordResetEmail(db, user, contactInfo.email, resetUrl)
+        db.consentEvents.push({
+          id: randomUUID(),
+          userId: user.id,
+          type: 'password_reset_requested',
+          provider: delivery.provider,
+          createdAt: now(),
+        })
+        await saveDb(db)
+      }
+
+      send(response, 200, {
+        ok: true,
+        message: resetRequestedMessage(language),
+        emailProvider: useResendEmail() ? 'resend' : 'local-preview',
+      })
+      return
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/api/auth/verify-email') {
+      const body = await readJson(request)
+      const contact = body.contact ?? body.email ?? body.phone ?? ''
+      const token = String(body.token ?? '').trim()
+      const language = body.language
+      const user = contact ? findUserByContact(db, contact) : null
+      const verification = user?.authSecret?.emailVerification
+
+      if (!contact || !token || !user || !verification) {
+        send(response, 400, {
+          error: invalidVerificationTokenError(language),
+          code: 'invalid_verification_token',
+        })
+        return
+      }
+
+      if (verification.usedAt) {
+        send(response, 409, {
+          error: alreadyVerifiedMessage(language),
+          code: 'already_verified',
+        })
+        return
+      }
+
+      if (!isFutureIso(verification.expiresAt) || !verifyScryptSecret(verification, token)) {
+        send(response, 400, {
+          error: invalidVerificationTokenError(language),
+          code: 'invalid_verification_token',
+        })
+        return
+      }
+
+      user.authSecret = {
+        ...(user.authSecret ?? {}),
+        emailVerification: {
+          ...verification,
+          usedAt: now(),
+        },
+      }
+      user.profile = {
+        ...user.profile,
+        emailVerified: true,
+      }
+      db.consentEvents.push({
+        id: randomUUID(),
+        userId: user.id,
+        type: 'email_verified',
+        provider: useResendEmail() ? 'resend' : 'local-preview',
+        createdAt: now(),
+      })
+
+      await saveDb(db)
+      send(response, 200, {
+        ok: true,
+        message: emailVerifiedMessage(language),
+        emailProvider: useResendEmail() ? 'resend' : 'local-preview',
+      })
+      return
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/api/auth/password-reset/complete') {
+      const body = await readJson(request)
+      const contact = body.contact ?? body.email ?? ''
+      const token = String(body.token ?? '')
+      const password = cleanPassword(body.password)
+      const passwordConfirm = cleanPassword(body.passwordConfirm ?? body.confirmPassword)
+      const language = body.language
+      const user = findUserByContact(db, contact)
+      const resetSecret = user?.authSecret?.passwordReset
+
+      if (
+        !user ||
+        !resetSecret ||
+        resetSecret.usedAt ||
+        !isFutureIso(resetSecret.expiresAt) ||
+        !verifyScryptSecret(resetSecret, token)
+      ) {
+        send(response, 400, { error: invalidResetTokenError(language), code: 'invalid_reset_token' })
+        return
+      }
+
+      const passwordError = validateSignupPassword(password, passwordConfirm, language)
+      if (passwordError) {
+        send(response, 400, passwordError)
+        return
+      }
+
+      user.authSecret = {
+        ...(user.authSecret ?? {}),
+        password: createPasswordSecret(password),
+        passwordReset: {
+          ...resetSecret,
+          usedAt: now(),
+        },
+      }
+      delete user.authSecret.betaPin
+      const session = { id: randomUUID(), userId: user.id, createdAt: now() }
+      db.sessions.push(session)
+      db.consentEvents.push({
+        id: randomUUID(),
+        userId: user.id,
+        type: 'password_reset_completed',
+        provider: 'Email',
+        createdAt: now(),
+      })
+      await saveDb(db)
+      send(response, 200, authStartPayload(db, user, session, request, { isReturningUser: true }))
+      return
+    }
+
     if (request.method === 'POST' && requestUrl.pathname === '/api/auth/start') {
       const body = await readJson(request)
       const contact = body.contact ?? body.email ?? body.phone ?? ''
       const authMode = body.mode === 'login' ? 'login' : 'signup'
       const provider = body.provider ?? 'Email'
-      const requiresBetaPin = provider === 'Email'
-      const betaPin = cleanBetaPin(body.betaPin)
+      const requiresPassword = provider === 'Email'
+      const password = cleanPassword(body.password ?? body.betaPin)
+      const passwordConfirm = cleanPassword(body.passwordConfirm ?? body.betaPinConfirm ?? body.confirmPassword)
       const language = body.profile?.language
       let user = findUserByContact(db, contact)
       const isReturningUser = Boolean(user)
 
-      if (!user && authMode === 'login') {
-        const isDutch = language === 'Nederlands'
-        send(response, 404, {
-          error: isDutch
-            ? 'Geen MatchPulse profiel gevonden voor deze e-mail of gsm. Kies Sign up om er een te maken.'
-            : 'No MatchPulse profile found for this email or mobile. Choose Sign up to create one.',
-          code: 'account_not_found',
+      if (requiresPassword && !normalizeContact(contact).contact) {
+        send(response, 400, {
+          error: language === 'Nederlands'
+            ? 'Vul eerst je e-mail of gsm in.'
+            : 'Add your email or mobile number first.',
+          code: 'contact_required',
         })
         return
       }
 
-      if (requiresBetaPin && betaPin.length < 4) {
-        send(response, 400, { error: betaPinError(language), code: 'beta_pin_required' })
+      if (requiresPassword && authMode === 'signup' && user) {
+        send(response, 409, {
+          error: language === 'Nederlands'
+            ? 'Er bestaat al een MatchPulse account met deze e-mail of gsm. Log in of gebruik wachtwoord vergeten.'
+            : 'A MatchPulse account already exists for this email or mobile. Log in or use forgot password.',
+          code: 'account_exists',
+        })
         return
       }
 
-      if (requiresBetaPin && authMode === 'login' && user && !user.authSecret?.betaPin) {
-        send(response, 401, { error: betaPinMismatchError(language), code: 'beta_pin_not_set' })
+      if (requiresPassword && authMode === 'login' && !password) {
+        send(response, 401, {
+          error: passwordRequiredError(language),
+          code: 'password_required',
+        })
         return
       }
 
-      if (requiresBetaPin && user?.authSecret?.betaPin && !verifyBetaPin(user.authSecret.betaPin, betaPin)) {
-        send(response, 401, { error: betaPinMismatchError(language), code: 'beta_pin_mismatch' })
+      if (requiresPassword && authMode === 'signup') {
+        const passwordError = validateSignupPassword(password, passwordConfirm, language)
+        if (passwordError) {
+          send(response, 400, passwordError)
+          return
+        }
+      }
+
+      if (requiresPassword && authMode === 'login') {
+        if (!user) {
+          send(response, 401, { error: invalidCredentialsError(language), code: 'invalid_credentials' })
+          return
+        }
+
+        const userContact = normalizeContact(contact)
+        const verification = user.authSecret?.emailVerification
+        if (isEmailVerificationRequired() && userContact.email && verification && !verification.usedAt) {
+          send(response, 403, {
+            error: verificationPendingError(language),
+            code: 'verification_pending',
+          })
+          return
+        }
+
+        const passwordMatches = user.authSecret?.password
+          ? verifyPasswordSecret(user.authSecret.password, password)
+          : false
+        const legacyPinMatches = !user.authSecret?.password && user.authSecret?.betaPin
+          ? verifyBetaPin(user.authSecret.betaPin, password)
+          : false
+
+        if (!passwordMatches && !legacyPinMatches) {
+          send(response, 401, { error: invalidCredentialsError(language), code: 'invalid_credentials' })
+          return
+        }
+      }
+
+      if (requiresPassword && authMode === 'login' && user && !user.authSecret?.password && !user.authSecret?.betaPin) {
+        send(response, 401, { error: invalidCredentialsError(language), code: 'invalid_credentials' })
         return
       }
 
@@ -2055,11 +2533,32 @@ async function routeCore(request, response) {
           id: profile.id,
           provider,
           profile,
-          authSecret: requiresBetaPin ? { betaPin: createBetaPinSecret(betaPin) } : undefined,
+          authSecret: requiresPassword ? { password: createPasswordSecret(password) } : undefined,
           inviteCode: createInviteCode(db, profile),
           invitedBy: body.inviteCode || '',
           onboarded: false,
           createdAt: now(),
+        }
+        const profileContact = normalizeContact(contact)
+        if (profileContact.email) {
+          const verificationToken = randomBytes(32).toString('hex')
+          user.authSecret = {
+            ...(user.authSecret ?? {}),
+            emailVerification: {
+              ...createScryptSecret(verificationToken, 'email-verification'),
+              expiresAt: emailVerificationExpiry(),
+              usedAt: '',
+            },
+          }
+          const verificationUrl = `${getOrigin(request)}/?verifyToken=${encodeURIComponent(verificationToken)}&verifyContact=${encodeURIComponent(profileContact.email)}`
+          const delivery = await sendSignupVerificationEmail(db, user, profileContact.email, verificationUrl)
+          db.consentEvents.push({
+            id: randomUUID(),
+            userId: user.id,
+            type: 'email_verification_requested',
+            provider: delivery.provider,
+            createdAt: now(),
+          })
         }
         db.users.push(user)
         ensureUserCollections(db, user.id)
@@ -2069,9 +2568,6 @@ async function routeCore(request, response) {
           ...user.profile,
           provider: user.provider,
           contact: contact || user.profile.contact,
-        }
-        if (requiresBetaPin && authMode === 'signup' && !user.authSecret?.betaPin) {
-          user.authSecret = { ...(user.authSecret ?? {}), betaPin: createBetaPinSecret(betaPin) }
         }
       }
       const session = { id: randomUUID(), userId: user.id, createdAt: now() }
@@ -2275,6 +2771,13 @@ async function routeCore(request, response) {
         send(response, 401, { error: 'Session expired' })
         return
       }
+      if (emailVerificationIsPending(user)) {
+        send(response, 403, {
+          error: verificationPendingError(body.profile?.language ?? user.profile?.language),
+          code: 'verification_pending',
+        })
+        return
+      }
       const cleanAge = Number.parseInt(body.profile?.age, 10)
       if (!Number.isNaN(cleanAge) && cleanAge < 18) {
         send(response, 400, { error: 'MatchPulse beta is 18+ only' })
@@ -2283,6 +2786,7 @@ async function routeCore(request, response) {
 
       const completedBio = String(body.profile?.bio ?? user.profile.bio ?? '')
       const completedPhotos = Array.isArray(body.photos) ? body.photos.filter(Boolean).length : 0
+      const accountContact = normalizeContact(user.profile.contact || user.profile.email || user.profile.phone)
       const completionScore = clamp(
         64 +
           (completedBio.length > 80 ? 8 : 0) +
@@ -2297,6 +2801,10 @@ async function routeCore(request, response) {
       user.profile = withDatingDefaults({
         ...user.profile,
         ...body.profile,
+        contact: user.profile.contact || body.profile?.contact,
+        email: accountContact.email || user.profile.email || body.profile?.email,
+        phone: accountContact.phone || user.profile.phone || body.profile?.phone,
+        emailVerified: Boolean(user.profile.emailVerified),
         age: cleanAge || user.profile.age,
         photo: body.profile?.photo || body.photos?.[0] || user.profile.photo,
         portrait: body.profile?.photo || body.photos?.[0] || user.profile.photo,

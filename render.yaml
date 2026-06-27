@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: matchpulse-hind
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: MATCHPULSE_PUBLIC_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MATCHPULSE_FROM_EMAIL
+        sync: false
+      - key: MATCHPULSE_DATA_PROVIDER
+        value: supabase
+      - key: MATCHPULSE_STORAGE_PROVIDER
+        value: supabase
+      - key: MATCHPULSE_STATE_ID
+        value: beta
+      - key: MATCHPULSE_STORAGE_BUCKET
+        value: profile-photos
+      - key: MATCHPULSE_REQUIRE_EMAIL_VERIFICATION
+        value: "1"
+      - key: MATCHPULSE_REQUIRE_EMAIL_DELIVERY
+        value: "1"

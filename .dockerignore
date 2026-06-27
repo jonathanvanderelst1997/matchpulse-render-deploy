@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+.env
+.env.*
+!.env.example
+!.env.free.example
+server/matchpulse-db.json
+server/uploads
+npm-debug.log*
+.DS_Store
