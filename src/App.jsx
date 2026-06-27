@@ -246,9 +246,12 @@ const authCopy = {
       kicker: 'Visual signal',
       title: 'Add photos that feel like you.',
       body: 'For this prototype, you can upload from your device or pick a sample so the flow is immediately testable.',
+      hint: 'Empty slots are ready first. Drag photos to reorder them; the first photo is your main profile photo.',
       add: 'Add photo',
       change: 'Replace',
       remove: 'Remove photo',
+      primary: 'Main photo',
+      limitReached: 'You already reached the photo limit. Remove or replace a photo first.',
       uploading: 'Uploading photo...',
       sample: 'Use sample',
       privacyTitle: 'Photo privacy',
@@ -398,9 +401,12 @@ const authCopy = {
       kicker: 'Visueel signaal',
       title: "Voeg foto's toe die bij jou passen.",
       body: 'Voor dit prototype kan je uploaden vanaf je toestel of een voorbeeld kiezen zodat de flow meteen testbaar is.',
+      hint: "Lege vakken staan eerst klaar. Sleep foto's om de volgorde te veranderen; de eerste foto is je hoofdfoto.",
       add: 'Foto toevoegen',
       change: 'Vervangen',
       remove: 'Foto verwijderen',
+      primary: 'Hoofdfoto',
+      limitReached: "Je hebt de fotolimiet bereikt. Verwijder of vervang eerst een foto.",
       uploading: 'Foto uploaden...',
       sample: 'Gebruik voorbeeld',
       privacyTitle: 'Foto-privacy',
@@ -2929,11 +2935,21 @@ function App() {
     const files = Array.from(event.target.files ?? []).filter(Boolean)
     if (!files.length) return
 
+    const replacing = replaceIndex !== null && Number.isFinite(Number(replaceIndex)) && Number(replaceIndex) >= 0
+    const currentPhotoCount = normalizeOnboardingPhotos(onboardingPhotos).length
+    const remainingSlots = Math.max(0, ONBOARDING_PHOTO_LIMIT - currentPhotoCount)
+    const uploadLimit = replacing ? Math.max(1, remainingSlots + 1) : remainingSlots
+    const filesToUpload = files.slice(0, uploadLimit)
+    if (!filesToUpload.length) {
+      event.target.value = ''
+      showToast(authText(onboardingDraft.language).photos.limitReached)
+      return
+    }
+
     setPhotoUploading(true)
     try {
       const uploads = []
-      const canAdd = ONBOARDING_PHOTO_LIMIT
-      for (const file of files.slice(0, canAdd)) {
+      for (const file of filesToUpload) {
         const image = await fileToDataUrl(file)
         const uploadedImage = sessionId
           ? (await uploadProfilePhoto(sessionId, image)).photoUrl
@@ -4222,6 +4238,7 @@ function AuthExperience({
               <p>{copy.photos.kicker}</p>
               <h1>{copy.photos.title}</h1>
               <span>{copy.photos.body}</span>
+              <small className="auth-photo-helper">{copy.photos.hint}</small>
               <div className="auth-photo-grid">
                 {photoSlots.map((photo, index) => {
                   if (!photo) {
@@ -4237,6 +4254,7 @@ function AuthExperience({
                         <input
                           type="file"
                           accept="image/*"
+                          multiple
                           onChange={(event) => {
                             void addPhotos(event)
                           }}
@@ -4260,6 +4278,7 @@ function AuthExperience({
                       onDragEnd={handlePhotoDragEnd}
                     >
                       <img src={photo} alt="" />
+                      {index === 0 ? <strong className="auth-photo-primary-badge">{copy.photos.primary}</strong> : null}
                       <button
                         type="button"
                         className="auth-photo-remove"
