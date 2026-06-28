@@ -8394,3 +8394,46 @@ button {
     max-width: none;
   }
 }
+
+.message-plan-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(245, 105, 96, 0.18);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(255, 246, 242, 0.95), rgba(237, 252, 247, 0.86));
+}
+
+.message-plan-list > span,
+.message-plan-list p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+.message-plan-list > span {
+  justify-content: flex-start;
+  color: var(--coral);
+  font-weight: 900;
+}
+
+.message-plan-list p {
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(31, 35, 48, 0.08);
+}
+
+.message-plan-list strong,
+.message-plan-list small {
+  color: var(--ink);
+}
+
+@media (max-width: 760px) {
+  .message-plan-list p {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

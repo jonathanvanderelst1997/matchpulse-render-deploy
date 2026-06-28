@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Compass,
   Eye,
   Flame,
@@ -23,7 +22,6 @@ import {
   Plus,
   Search,
   Send,
-  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -1012,14 +1010,10 @@ const signalAnchors = {
 }
 
 const navItems = [
-  { id: 'profile', label: 'Profile', icon: UserRound },
   { id: 'discover', label: 'Nearby', icon: Compass },
   { id: 'matches', label: 'Deep Match', icon: HeartPulse },
   { id: 'messages', label: 'Messages', icon: MessageSquare },
-  { id: 'plans', label: 'Plans', icon: CalendarDays },
-  { id: 'memory', label: 'AI Memory', icon: Clock3 },
-  { id: 'settings', label: 'Settings', icon: Settings },
-  { id: 'dev', label: 'Dev', icon: WandSparkles },
+  { id: 'profile', label: 'Profile', icon: UserRound },
 ]
 
 const appCopy = {
@@ -1806,6 +1800,20 @@ function safeSetLocalStorageItem(key, value) {
   }
 }
 
+function safeGetLocalStorageItem(key) {
+  if (typeof window === 'undefined') return ''
+
+  try {
+    return window.localStorage.getItem(key) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function canUseInternalTools() {
+  return import.meta.env.DEV || safeGetLocalStorageItem('matchpulse-dev-tools') === '1'
+}
+
 function defaultFloatingFeedbackDraft(surface = 'app', surfaceLabel = '') {
   const issue = createFloatingFeedbackIssue(surface, surfaceLabel)
   return {
@@ -2538,7 +2546,13 @@ function App() {
   )
 
   const navigateToView = useCallback((viewId) => {
-    if (viewId === 'messages') {
+    const requestedView = viewId === 'plans'
+      ? 'messages'
+      : (['briefing', 'dev', 'lab', 'play'].includes(viewId) && !canUseInternalTools())
+        ? 'discover'
+        : viewId
+
+    if (requestedView === 'messages') {
       const preferredThread =
         visibleMatches.find((match) =>
           messages.some(
@@ -2561,7 +2575,7 @@ function App() {
 
       if (preferredThread) setSelectedMatchId(preferredThread.id)
     }
-    setActiveView(viewId)
+    setActiveView(requestedView)
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' })
   }, [messages, visibleMatches])
 
@@ -3717,6 +3731,7 @@ function App() {
             selectMatch={selectMatchInMessages}
             messages={messages}
             profile={profileDraft}
+            plannedDates={plannedDates}
             sendDirectMessage={sendDirectMessage}
             acceptMessageRequest={acceptMessageRequest}
             openModal={setModal}
@@ -4689,7 +4704,7 @@ function Topbar({ query, setQuery, profile, setActiveView, onNotify }) {
       <button className="top-icon" type="button" onClick={onNotify} aria-label="Notifications">
         <Bell size={22} />
       </button>
-      <button className="account-chip" type="button" onClick={() => setActiveView('profile')}>
+      <button className="account-chip" type="button" onClick={() => setActiveView('settings')} aria-label={copy.nav?.settings ?? 'Settings'}>
         <img src={profile.photo} alt="" />
         <span>
           {profile.name}
@@ -5990,6 +6005,7 @@ function MessagesView({
   selectMatch,
   messages,
   profile,
+  plannedDates = [],
   sendDirectMessage,
   acceptMessageRequest,
   openModal,
@@ -6028,6 +6044,8 @@ function MessagesView({
     requestPlaceholder: 'Write a respectful message request...',
     acceptPlaceholder: 'Accept the request to reply...',
     limitPlaceholder: 'Daily request limit reached...',
+    planDate: 'Plan date',
+    plannedDates: 'Date plans',
     checks: ['Specific to profile', 'Invites a reply', 'Warm but clear'],
     ...appText(profile?.language).messages,
   }
@@ -6046,6 +6064,7 @@ function MessagesView({
   const requestUsage = messageRequestUsage(messages, profile)
   const requestLocked = selectedStatus !== 'accepted' && requestUsage.remaining <= 0
   const composeDisabled = incomingRequest || requestLocked
+  const selectedPlans = plannedDates.filter((plan) => plan.matchId === selectedMatch.id)
   const messageMatchIds = new Set(messages.map((message) => message.matchId))
   const threadMatches = [
     ...matchList.filter((match) => messageMatchIds.has(match.id)),
@@ -6218,9 +6237,17 @@ function MessagesView({
                 </button>
               </div>
             ) : (
-              <button type="button" onClick={() => setDraft(suggestions[0])}>
-                {selectedStatus === 'accepted' ? messageCopy.draftReply : messageCopy.draftRequest}
-              </button>
+              <div className="conversation-actions">
+                <button type="button" onClick={() => setDraft(suggestions[0])}>
+                  {selectedStatus === 'accepted' ? messageCopy.draftReply : messageCopy.draftRequest}
+                </button>
+                {selectedStatus === 'accepted' ? (
+                  <button type="button" onClick={() => openModal({ type: 'plan' })}>
+                    <CalendarDays size={17} />
+                    {isDutch ? 'Date plannen' : messageCopy.planDate}
+                  </button>
+                ) : null}
+              </div>
             )}
           </div>
 
@@ -6244,6 +6271,21 @@ function MessagesView({
             </p>
             <span>{selectedMatch.score}% deep match</span>
           </div>
+
+          {selectedPlans.length ? (
+            <div className="message-plan-list" aria-label={isDutch ? 'Date-plannen' : messageCopy.plannedDates}>
+              <span>
+                <CalendarDays size={16} />
+                {isDutch ? 'Date-plannen' : messageCopy.plannedDates}
+              </span>
+              {selectedPlans.map((plan) => (
+                <p key={plan.id}>
+                  <strong>{plan.place}</strong>
+                  <small>{plan.time}</small>
+                </p>
+              ))}
+            </div>
+          ) : null}
 
           <SharedNeuronPanel
             match={selectedMatch}
@@ -6938,25 +6980,6 @@ function SafetyRoadmapCard({ reportCount = 0, language = viewer.language }) {
   )
 }
 
-function providerChecklistCopy(item, language = viewer.language) {
-  if (language !== 'Nederlands') return item
-  const translated = {
-    noPaidAi: ['Geen betaalde AI-calls', 'Lokale heuristische AI is actief.'],
-    noRequiredEmailProvider: ['Geen betaalde e-mail nodig', 'Briefings worden als lokale previews bewaard.'],
-    freeDatabasePath: ['Gratis databasepad', 'Gratis opslagpad is actief voor beta-state.'],
-    freeStoragePath: ['Gratis fotopslag', 'Gratis storagepad is actief voor profielfotos.'],
-    auth: ['Echte login', 'Supabase Auth public env is gedetecteerd.'],
-    database: ['Hosted database', 'Supabase state table is actief.'],
-    storage: ['Hosted fotostorage', 'Supabase Storage bucket is actief.'],
-    ai: ['AI memory engine', 'Lokale insight engine zonder API-kost.'],
-    email: ['Sunday briefing', 'Preview wordt lokaal opgeslagen; geen e-mailprovider nodig.'],
-    publicInvite: ['Publieke invite URL', 'Beta-link is klaar om te delen.'],
-    serviceRole: ['Backend Supabase service', 'Service role key is server-side gedetecteerd.'],
-  }[item.id]
-
-  return translated ? { ...item, label: translated[0], detail: translated[1] } : item
-}
-
 function SettingsView({
   profile,
   privacySettings,
@@ -6966,17 +6989,11 @@ function SettingsView({
   exportProfile,
   inviteLink,
   copyInviteLink,
-  createLocalBetaTester,
-  cleanupBetaData,
   restartOnboarding,
   deleteBetaAccount,
-  providerStatus,
-  betaOverview,
   setActiveView,
   reportCount,
   feedbackCount,
-  testerFeedbackCount,
-  submitTesterFeedback,
 }) {
   const language = profile?.language ?? viewer.language
   const settingsCopy = appText(language).settings
@@ -6991,11 +7008,6 @@ function SettingsView({
     kicker: 'Settings',
     title: 'Privacy and match controls',
     body: 'Keep the luxury flow, but make the sensitive parts explicit and reversible.',
-    zeroCost: 'Zero-cost mode',
-    freeActive: 'Strict free mode is active: local AI, local briefing previews, and no paid API calls.',
-    paidDetected: 'Paid API detected:',
-    readiness: 'Beta readiness',
-    currentMode: 'Current mode',
     consentProfile: 'Consent-first profile',
     consentBody: 'Your private memory, attention signals, exports, and visibility choices stay under your control.',
     export: 'Export private profile',
@@ -7021,8 +7033,6 @@ function SettingsView({
       onlineStatus: settingsCopy.toggles?.onlineStatus ?? defaultToggleCopy.onlineStatus,
     },
   }
-  const costChecklist = providerStatus?.costChecklist ?? []
-  const paidServices = providerStatus?.paidServices ?? []
   const settings = [
     {
       id: 'memoryLearning',
@@ -7060,66 +7070,6 @@ function SettingsView({
       />
 
       <div className="settings-grid">
-        <section className="settings-panel zero-cost-panel">
-          <div>
-            <h2>{copy.zeroCost}</h2>
-            <p>
-              {paidServices.length
-                ? `${copy.paidDetected} ${paidServices.join(', ')}.`
-                : copy.freeActive}
-            </p>
-          </div>
-          <div className="readiness-list compact">
-            {costChecklist.map((item) => (
-              <p className={item.ready ? 'ready' : ''} key={item.id}>
-                <i />
-                <span>
-                  <strong>{providerChecklistCopy(item, language).label}</strong>
-                  <small>{providerChecklistCopy(item, language).detail}</small>
-                </span>
-              </p>
-            ))}
-          </div>
-        </section>
-
-        <BetaLaunchPanel
-          betaOverview={betaOverview}
-          providerStatus={providerStatus}
-          inviteLink={inviteLink}
-          copyInviteLink={copyInviteLink}
-          createLocalBetaTester={createLocalBetaTester}
-          cleanupBetaData={cleanupBetaData}
-          setActiveView={setActiveView}
-          language={language}
-        />
-
-        <TesterFeedbackPanel
-          language={language}
-          testerFeedbackCount={testerFeedbackCount}
-          onSubmit={submitTesterFeedback}
-        />
-
-        <section className="settings-panel readiness-panel">
-          <div>
-            <h2>{copy.readiness}</h2>
-            <p>
-              {copy.currentMode}: {providerStatus?.database ?? 'local-json'} database, {providerStatus?.ai ?? 'local-heuristic'} AI,
-              {' '}{providerStatus?.email ?? 'local-preview'} email.
-            </p>
-          </div>
-          <div className="readiness-list">
-            {(providerStatus?.checklist ?? []).map((item) => (
-              <p className={item.ready ? 'ready' : ''} key={item.id}>
-                <i />
-                <span>
-                  <strong>{providerChecklistCopy(item, language).label}</strong>
-                  <small>{providerChecklistCopy(item, language).detail}</small>
-                </span>
-              </p>
-            ))}
-          </div>
-        </section>
-
         <section className="settings-summary">
           <ShieldCheck size={28} />
           <h2>{copy.consentProfile}</h2>
@@ -8107,87 +8057,6 @@ function FloatingFeedbackWidget({
           </details>
         </div>
       ) : null}
-    </section>
-  )
-}
-
-function TesterFeedbackPanel({ language = viewer.language, testerFeedbackCount = 0, onSubmit }) {
-  const isDutch = isDutchLanguage(language)
-  const [rating, setRating] = useState(4)
-  const [issueType, setIssueType] = useState('general')
-  const [body, setBody] = useState('')
-  const issueOptions = [
-    ['general', isDutch ? 'Algemeen' : 'General'],
-    ['confusing', isDutch ? 'Onduidelijk' : 'Confusing'],
-    ['visual', isDutch ? 'Visueel' : 'Visual'],
-    ['bug', isDutch ? 'Bug' : 'Bug'],
-    ['privacy', 'Privacy'],
-    ['match_quality', isDutch ? 'Matchkwaliteit' : 'Match quality'],
-    ['performance', isDutch ? 'Snelheid' : 'Performance'],
-  ]
-
-  function submit(event) {
-    event.preventDefault()
-    const cleanBody = body.trim()
-    if (!cleanBody) return
-    onSubmit({ surface: 'settings', rating, issueType, body: cleanBody })
-    setBody('')
-  }
-
-  return (
-    <section className="settings-panel tester-feedback-panel">
-      <div className="panel-title inline">
-        <MessageSquare size={20} />
-        <h2>{isDutch ? 'Testerfeedback' : 'Tester feedback'}</h2>
-        <strong>{testerFeedbackCount}</strong>
-      </div>
-      <p>
-        {isDutch
-          ? 'Laat testers meteen melden wat traag, verwarrend, mooi of verkeerd voelt. Dit blijft intern voor de beta.'
-          : 'Let testers report what feels slow, confusing, beautiful, or broken. This stays internal for the beta.'}
-      </p>
-      <form className="tester-feedback-form" onSubmit={submit}>
-        <div className="feedback-rating-row" aria-label={isDutch ? 'Score' : 'Rating'}>
-          {[1, 2, 3, 4, 5].map((value) => (
-            <button
-              className={rating === value ? 'active' : ''}
-              type="button"
-              onClick={() => setRating(value)}
-              key={value}
-              aria-pressed={rating === value}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-        <div className="feedback-type-row">
-          {issueOptions.map(([value, label]) => (
-            <button
-              className={issueType === value ? 'active' : ''}
-              type="button"
-              onClick={() => setIssueType(value)}
-              key={value}
-              aria-pressed={issueType === value}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <label>
-          {isDutch ? 'Wat viel je op?' : 'What stood out?'}
-          <textarea
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            placeholder={isDutch
-              ? 'Bijvoorbeeld: Radar is mooi maar ik mis waarom iemand bovenaan staat.'
-              : 'Example: Radar looks good, but I miss why someone ranks first.'}
-          />
-        </label>
-        <button className="auth-primary compact" type="submit" disabled={!body.trim()}>
-          <Send size={17} />
-          {isDutch ? 'Feedback opslaan' : 'Save feedback'}
-        </button>
-      </form>
     </section>
   )
 }
