@@ -1541,6 +1541,29 @@ const floatingFeedbackIssueTypeOptions = [
 const floatingFeedbackMaxTextLength = 1200
 const maxFloatingScreenshotsPerIssue = 8
 const maxScreenshotBytes = 5 * 1024 * 1024
+const maxStoredFloatingScreenshotChars = 220000
+const floatingFeedbackResolvedAt = '2026-06-28T20:45:00.000Z'
+
+const floatingFeedbackKnownResolvedRules = [
+  {
+    id: 'feedback-widget-flow',
+    label: 'Fixed in current beta build',
+    labelNl: 'Opgelost in huidige beta build',
+    terms: ['feedback knop', 'tekstbalk', 'submit', 'issue 2', 'screenshot toevoegen'],
+  },
+  {
+    id: 'feedback-photo-quota',
+    label: 'Photo upload fixed',
+    labelNl: 'Foto-upload opgelost',
+    terms: ['quota', 'issue 4', 'nieuwe foto', 'foto upload', 'uploaden', 'screenshot upload'],
+  },
+  {
+    id: 'profile-cleanup',
+    label: 'Profile view cleaned up',
+    labelNl: 'Profielweergave opgeschoond',
+    terms: ['profiel verwijder', 'aantrekkings-dna', 'private aandacht', 'private attention'],
+  },
+]
 
 const floatingFeedbackIssueTypeCopy = {
   general: ['General', 'General'],
@@ -1656,7 +1679,49 @@ function createFloatingFeedbackIssue(surface = 'app', surfaceLabel = '', surface
     createdAt: new Date().toISOString(),
     updatedAt: '',
     syncedAt: '',
+    resolvedAt: '',
+    resolutionLabel: '',
+    resolutionLabelNl: '',
+    resolvedFixId: '',
     isLocal: true,
+  }
+}
+
+function normalizeFeedbackSearchText(value = '') {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+function applyKnownResolvedFloatingFeedbackIssue(issue) {
+  if (!issue || issue.resolvedAt) return issue
+
+  const createdAtMs = Date.parse(issue.createdAt || issue.updatedAt || '')
+  const resolvedAtMs = Date.parse(floatingFeedbackResolvedAt)
+  if (Number.isFinite(createdAtMs) && Number.isFinite(resolvedAtMs) && createdAtMs > resolvedAtMs) {
+    return issue
+  }
+
+  const haystack = normalizeFeedbackSearchText([
+    issue.body,
+    issue.surface,
+    issue.surfaceLabel,
+    issue.surfaceContext,
+    issue.issueType,
+  ].filter(Boolean).join(' '))
+  const matchedRule = floatingFeedbackKnownResolvedRules.find((rule) =>
+    rule.terms.some((term) => haystack.includes(normalizeFeedbackSearchText(term))),
+  )
+
+  if (!matchedRule) return issue
+
+  return {
+    ...issue,
+    resolvedAt: floatingFeedbackResolvedAt,
+    resolvedFixId: matchedRule.id,
+    resolutionLabel: matchedRule.label,
+    resolutionLabelNl: matchedRule.labelNl,
   }
 }
 
@@ -1676,7 +1741,7 @@ function normalizeFloatingIssue(item, fallbackSurface = 'app', fallbackSurfaceLa
     : []
   const surface = fallbackFloatingSurface(item.surface)
   const surfaceLabel = String(item.surfaceLabel || item.surface || fallbackSurfaceLabel || fallbackSurface).slice(0, 80)
-  return {
+  const normalizedIssue = {
     ...createFloatingFeedbackIssue(fallbackSurface, fallbackSurfaceLabel),
     ...item,
     id: String(item.id || createFeedbackClientId()),
@@ -1694,7 +1759,13 @@ function normalizeFloatingIssue(item, fallbackSurface = 'app', fallbackSurfaceLa
     syncedSurfaceLabel: String(item.syncedSurfaceLabel || '').slice(0, 80),
     syncedSurfaceContext: String(item.syncedSurfaceContext || '').slice(0, 140),
     surfaceContext: String(item.surfaceContext || item.context || '').slice(0, 140),
+    resolvedAt: String(item.resolvedAt || '').slice(0, 40),
+    resolutionLabel: String(item.resolutionLabel || '').slice(0, 90),
+    resolutionLabelNl: String(item.resolutionLabelNl || item.resolutionLabel || '').slice(0, 90),
+    resolvedFixId: String(item.resolvedFixId || '').slice(0, 60),
   }
+
+  return applyKnownResolvedFloatingFeedbackIssue(normalizedIssue)
 }
 
 function countFloatingScreenshots(screenshots = []) {
@@ -1705,6 +1776,97 @@ function floatingFeedbackScreenshotsBytes(screenshots = []) {
   return Array.isArray(screenshots)
     ? screenshots.reduce((sum, shot) => sum + (Number.parseInt(shot.size, 10) || 0), 0)
     : 0
+}
+
+function isFloatingFeedbackIssueResolved(issue) {
+  return Boolean(issue?.resolvedAt || issue?.resolvedFixId)
+}
+
+function floatingFeedbackResolutionLabel(issue, language = viewer.language) {
+  if (!isFloatingFeedbackIssueResolved(issue)) return ''
+  if (isDutchLanguage(language)) {
+    return issue.resolutionLabelNl || issue.resolutionLabel || 'Opgelost'
+  }
+  return issue.resolutionLabel || 'Resolved'
+}
+
+function compactFloatingScreenshotForStorage(shot, stripDataUrl = false) {
+  const dataUrl = String(shot?.dataUrl ?? '')
+  const storedDataUrl = !stripDataUrl && dataUrl.length <= maxStoredFloatingScreenshotChars ? dataUrl : ''
+  const storedSize = Number.parseInt(shot?.size, 10) || estimateDataUrlBytes(storedDataUrl)
+
+  return {
+    id: String(shot?.id ?? createFeedbackClientId()),
+    dataUrl: storedDataUrl,
+    name: String(shot?.name ?? 'screenshot').slice(0, 80),
+    mime: String(shot?.mime ?? 'image/jpeg').slice(0, 80),
+    size: storedSize,
+    originalSize: Number.parseInt(shot?.originalSize, 10) || Number.parseInt(shot?.size, 10) || 0,
+    compacted: Boolean(shot?.compacted || stripDataUrl || dataUrl !== storedDataUrl),
+  }
+}
+
+function compactFloatingFeedbackDraftForStorage(draft, stripScreenshots = false) {
+  const normalized = normalizeFloatingFeedbackState(draft)
+  return {
+    activeItemId: normalized.activeItemId,
+    collapsed: Boolean(normalized.collapsed),
+    items: normalized.items.map((item) => ({
+      ...item,
+      screenshots: (item.screenshots ?? [])
+        .map((shot) => compactFloatingScreenshotForStorage(shot, stripScreenshots))
+        .filter((shot) => shot.name && (shot.dataUrl || stripScreenshots)),
+    })),
+  }
+}
+
+function safeWriteFloatingFeedbackDraft(storageSeed, draft) {
+  if (typeof window === 'undefined') return false
+
+  const storageKey = floatingFeedbackStorageKeyForSeed(storageSeed)
+  const savedAt = new Date().toISOString()
+
+  try {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        ...compactFloatingFeedbackDraftForStorage(draft),
+        savedAt,
+      }),
+    )
+    return true
+  } catch {
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          ...compactFloatingFeedbackDraftForStorage(draft, true),
+          savedAt,
+          storageCompacted: true,
+          storageWarning: 'Screenshots were removed from local draft storage after browser quota pressure.',
+        }),
+      )
+      return true
+    } catch {
+      try {
+        window.localStorage.removeItem(storageKey)
+      } catch {
+        // Ignore storage failures; feedback must never break the app shell.
+      }
+      return false
+    }
+  }
+}
+
+function safeSetLocalStorageItem(key, value) {
+  if (typeof window === 'undefined') return false
+
+  try {
+    window.localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function defaultFloatingFeedbackDraft(surface = 'app', surfaceLabel = '') {
@@ -1968,6 +2130,93 @@ function fileToDataUrl(file) {
   })
 }
 
+function estimateDataUrlBytes(dataUrl = '') {
+  const payload = String(dataUrl).split(',')[1] ?? ''
+  return Math.ceil(payload.length * 0.75)
+}
+
+function loadImageDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = reject
+    image.src = dataUrl
+  })
+}
+
+async function compressFeedbackScreenshotDataUrl(dataUrl, { maxSide = 960, quality = 0.68 } = {}) {
+  if (typeof document === 'undefined' || !String(dataUrl).startsWith('data:image/')) {
+    return {
+      dataUrl,
+      mime: 'image/png',
+      size: estimateDataUrlBytes(dataUrl),
+      compacted: false,
+    }
+  }
+
+  try {
+    const image = await loadImageDataUrl(dataUrl)
+    const largestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1)
+    const scale = Math.min(1, maxSide / largestSide)
+    const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale))
+    const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas unavailable')
+
+    context.fillStyle = '#fff'
+    context.fillRect(0, 0, width, height)
+    context.drawImage(image, 0, 0, width, height)
+
+    let nextDataUrl = canvas.toDataURL('image/jpeg', quality)
+    if (nextDataUrl.length > maxStoredFloatingScreenshotChars) {
+      nextDataUrl = canvas.toDataURL('image/jpeg', 0.5)
+    }
+    if (nextDataUrl.length > maxStoredFloatingScreenshotChars) {
+      const compactScale = Math.min(1, 680 / Math.max(width, height, 1))
+      canvas.width = Math.max(1, Math.round(width * compactScale))
+      canvas.height = Math.max(1, Math.round(height * compactScale))
+      const compactContext = canvas.getContext('2d')
+      if (!compactContext) throw new Error('Canvas unavailable')
+      compactContext.fillStyle = '#fff'
+      compactContext.fillRect(0, 0, canvas.width, canvas.height)
+      compactContext.drawImage(image, 0, 0, canvas.width, canvas.height)
+      nextDataUrl = canvas.toDataURL('image/jpeg', 0.44)
+    }
+
+    return {
+      dataUrl: nextDataUrl,
+      mime: 'image/jpeg',
+      size: estimateDataUrlBytes(nextDataUrl),
+      compacted: nextDataUrl !== dataUrl,
+    }
+  } catch {
+    return {
+      dataUrl,
+      mime: 'image/png',
+      size: estimateDataUrlBytes(dataUrl),
+      compacted: false,
+    }
+  }
+}
+
+async function fileToFeedbackScreenshot(file) {
+  const dataUrl = await fileToDataUrl(file)
+  const compressed = await compressFeedbackScreenshotDataUrl(dataUrl)
+
+  return {
+    id: createFeedbackClientId(),
+    dataUrl: compressed.dataUrl,
+    name: file.name || 'screenshot',
+    mime: compressed.mime || file.type || 'image/jpeg',
+    size: compressed.size || file.size,
+    originalSize: file.size,
+    compacted: compressed.compacted,
+  }
+}
+
 function App() {
   const [initialAuthState] = useState(() => {
     const storedSessionId = getStoredSessionId()
@@ -2091,7 +2340,7 @@ function App() {
     if (state.sessionId) {
       setSessionId(state.sessionId)
       if (typeof window !== 'undefined') {
-        window.localStorage.setItem('matchpulse-session', state.sessionId)
+        safeSetLocalStorageItem('matchpulse-session', state.sessionId)
       }
     }
     setProfileDraft(state.profile)
@@ -2183,7 +2432,7 @@ function App() {
         if (cancelled) return
         setAuthProvider(auth.profile.provider ?? 'Supabase')
         setSessionId(auth.sessionId)
-        window.localStorage.setItem('matchpulse-session', auth.sessionId)
+        safeSetLocalStorageItem('matchpulse-session', auth.sessionId)
         setOnboardingDraft(auth.profile)
         setOnboardingPhotos(resolveOnboardingPhotos(auth))
         setServerInviteLink(auth.inviteLink)
@@ -2273,7 +2522,7 @@ function App() {
       return
     }
 
-    window.localStorage.setItem(onboardingDraftStorageKey, JSON.stringify({
+    safeSetLocalStorageItem(onboardingDraftStorageKey, JSON.stringify({
       step: authStep,
       unlockedStep: Math.max(authUnlockedStep, onboardingStepIndex(authStep)),
       sessionId,
@@ -2288,13 +2537,7 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(
-      floatingFeedbackStorageKeyForSeed(floatingFeedbackStorageSeed),
-      JSON.stringify({
-        ...floatingFeedbackDraft,
-        savedAt: new Date().toISOString(),
-      }),
-    )
+    safeWriteFloatingFeedbackDraft(floatingFeedbackStorageSeed, floatingFeedbackDraft)
   }, [floatingFeedbackDraft, floatingFeedbackStorageSeed])
 
   useEffect(() => {
@@ -2803,7 +3046,7 @@ function App() {
       setAuthPasswordConfirm('')
       setAuthResetSent(false)
       setResetToken('')
-      window.localStorage.setItem('matchpulse-session', session.sessionId)
+      safeSetLocalStorageItem('matchpulse-session', session.sessionId)
       setOnboardingDraft(session.profile)
       setOnboardingPhotos(resolveOnboardingPhotos(session))
       setServerInviteLink(session.inviteLink)
@@ -2895,7 +3138,7 @@ function App() {
       setAuthPasswordConfirm('')
       setAuthResetSent(false)
       setResetToken('')
-      window.localStorage.setItem('matchpulse-session', session.sessionId)
+      safeSetLocalStorageItem('matchpulse-session', session.sessionId)
       if (typeof window !== 'undefined') {
         window.history.replaceState({}, '', window.location.pathname)
       }
@@ -7406,6 +7649,8 @@ function FloatingFeedbackWidget({
   const safePositionX = safePosition?.x
   const safePositionY = safePosition?.y
   const activeItemLabel = isNaN(activeIndex) || activeIndex < 0 ? '?' : `${activeIndex + 1}.`
+  const activeIssueResolved = isFloatingFeedbackIssueResolved(activeItem)
+  const activeResolutionLabel = floatingFeedbackResolutionLabel(activeItem, language)
 
   const updateDraft = (next) => {
     const patch = typeof next === 'function'
@@ -7458,10 +7703,14 @@ function FloatingFeedbackWidget({
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (safePositionX !== undefined && safePositionY !== undefined) {
-      window.localStorage.setItem(floatingFeedbackPositionStorageKey, JSON.stringify({
-        x: safePositionX,
-        y: safePositionY,
-      }))
+      try {
+        window.localStorage.setItem(floatingFeedbackPositionStorageKey, JSON.stringify({
+          x: safePositionX,
+          y: safePositionY,
+        }))
+      } catch {
+        // Ignore storage pressure; widget position is cosmetic.
+      }
     }
   }, [safePositionX, safePositionY])
 
@@ -7626,19 +7875,15 @@ function FloatingFeedbackWidget({
 
     const nextShots = []
     const insertAt = clampScreenshotSlotIndex(target.screenshots, slotIndex)
+    const uploadCapacity = slotIndex === null
+      ? Math.max(0, maxFloatingScreenshotsPerIssue - target.screenshots.length)
+      : Math.max(0, maxFloatingScreenshotsPerIssue - insertAt)
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue
       if (file.size > maxScreenshotBytes) continue
-      if (nextShots.length + target.screenshots.length >= maxFloatingScreenshotsPerIssue) break
+      if (nextShots.length >= uploadCapacity) break
       try {
-        const dataUrl = await fileToDataUrl(file)
-        nextShots.push({
-          id: createFeedbackClientId(),
-          dataUrl,
-          name: file.name || 'screenshot',
-          mime: file.type || 'image/png',
-          size: file.size,
-        })
+        nextShots.push(await fileToFeedbackScreenshot(file))
       } catch {
         // ignore bad file
       }
@@ -7820,7 +8065,7 @@ function FloatingFeedbackWidget({
               >
                 {issueItems.map((item, index) => (
                   <option value={item.id} key={item.id}>
-                    {`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)} · ${countFloatingScreenshots(item.screenshots)}/${maxFloatingScreenshotsPerIssue}`}
+                    {`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)} · ${countFloatingScreenshots(item.screenshots)}/${maxFloatingScreenshotsPerIssue}${isFloatingFeedbackIssueResolved(item) ? ` · ${isDutch ? 'Opgelost' : 'Resolved'}` : ''}`}
                   </option>
                 ))}
               </select>
@@ -7833,10 +8078,16 @@ function FloatingFeedbackWidget({
 
           <div className="floating-feedback-editor-card">
             <div className="floating-feedback-meta">
-              <strong>
+              <strong className="floating-feedback-title-line">
                 {isDutch
                   ? `Issue ${activeItemLabel} · ${activeSurfaceLabel}`
                   : `Issue ${activeItemLabel} · ${activeSurfaceLabel}`}
+                {activeIssueResolved ? (
+                  <span className="floating-feedback-resolved-badge">
+                    <span aria-hidden="true">✓</span>
+                    {activeResolutionLabel}
+                  </span>
+                ) : null}
               </strong>
               <small>
                 {isDutch
@@ -7852,7 +8103,9 @@ function FloatingFeedbackWidget({
                 </small>
               ) : null}
             </div>
-            <small className="floating-feedback-status-line">{issueStatusLabel}</small>
+            <small className={`floating-feedback-status-line${activeIssueResolved ? ' resolved' : ''}`}>
+              {activeIssueResolved ? activeResolutionLabel : issueStatusLabel}
+            </small>
             <textarea
               value={activeItem?.body ?? ''}
               onChange={(event) => updateActiveItem({ body: clampFloatingFeedbackText(event.target.value) })}
@@ -8007,7 +8260,15 @@ function FloatingFeedbackWidget({
                   onClick={() => setActiveItem(item.id)}
                   key={item.id}
                 >
-                  <strong>{`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)}`}</strong>
+                  <span className="floating-feedback-issue-title">
+                    <strong>{`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)}`}</strong>
+                    {isFloatingFeedbackIssueResolved(item) ? (
+                      <span className="floating-feedback-resolved-badge">
+                        <span aria-hidden="true">✓</span>
+                        {floatingFeedbackResolutionLabel(item, language)}
+                      </span>
+                    ) : null}
+                  </span>
                   <small className="floating-feedback-issue-meta">
                     {item.surfaceLabel || item.surface || (isDutch ? 'Onbekende pagina' : 'Unknown page')}
                     {item.surfaceContext ? ` · ${item.surfaceContext}` : ''}
@@ -8231,8 +8492,6 @@ function ProfileToolView({
   notes,
   deleteMemoryNote,
   attentionSignals,
-  deleteAttentionSignal,
-  clearAttentionSignals,
   captureProfileSignal,
   addProfilePhoto,
   saveProfileChanges,
@@ -8544,18 +8803,6 @@ function ProfileToolView({
             onRemove={removeSignalEverywhere}
             title={toolCopy.extracted}
             emptyText={toolCopy.extractedEmpty}
-            language={profile.language}
-          />
-          <AttractionDnaPanel
-            dna={profileAttractionDna}
-            matchName={profile.language === 'Nederlands' ? 'je private model' : 'your private model'}
-            compact
-            language={profile.language}
-          />
-          <PrivateAttentionPanel
-            signals={attentionSignals}
-            onDelete={deleteAttentionSignal}
-            onClear={clearAttentionSignals}
             language={profile.language}
           />
           <div className="ai-chat">

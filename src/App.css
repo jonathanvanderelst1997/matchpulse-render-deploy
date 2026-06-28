@@ -5711,6 +5711,43 @@ button {
   white-space: nowrap;
 }
 
+.floating-feedback-title-line,
+.floating-feedback-issue-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.floating-feedback-resolved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border: 1px solid rgba(44, 165, 112, 0.22);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: #237d59;
+  background: rgba(92, 188, 142, 0.12);
+  font-size: 10px;
+  font-weight: 880;
+  line-height: 1;
+}
+
+.floating-feedback-resolved-badge span {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  color: #fff;
+  background: #2fa772;
+  font-size: 10px;
+}
+
 .floating-feedback-meta small {
   color: #73798a;
   font-size: 11px;
@@ -5726,6 +5763,10 @@ button {
   color: #1f222b;
   font-size: 13px;
   font-weight: 760;
+}
+
+.floating-feedback-status-line.resolved {
+  color: #237d59;
 }
 
 .floating-feedback textarea {
