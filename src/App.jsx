@@ -7725,6 +7725,54 @@ function FloatingFeedbackWidget({
     setDraggingScreenshotIndex(null)
   }
 
+  async function submitActiveIssue() {
+    if (!activeItem) return
+    const body = cleanBody || (isDutch ? 'Screenshot-feedback zonder extra tekst.' : 'Screenshot feedback without extra text.')
+    if (!cleanBody && !activeIssueScreenshotCount) return
+
+    if (!sessionId) {
+      updateActiveItem({ body })
+      setSyncStatus('idle')
+      return
+    }
+
+    setSyncStatus('saving')
+    try {
+      await onSync({
+        clientId: activeItem.clientId,
+        surface: activeSurface,
+        surfaceLabel: activeSurfaceLabel,
+        rating: activeItem.rating,
+        issueType: activeItem.issueType,
+        body,
+        metadata: {
+          floating: true,
+          manualSubmit: true,
+          surface: activeSurface,
+          surfaceLabel: activeSurfaceLabel,
+          surfaceContext: activeSurfaceContext,
+          screenshotCount: activeIssueScreenshotCount,
+          screenshotBytes: floatingFeedbackScreenshotsBytes(activeScreenshots),
+          language,
+        },
+      })
+      updateActiveItem({
+        body,
+        syncedBody: body,
+        syncedRating: activeItem.rating,
+        syncedIssueType: activeItem.issueType,
+        syncedSurface: activeSurface,
+        syncedSurfaceLabel: activeSurfaceLabel,
+        syncedSurfaceContext: activeSurfaceContext,
+        syncedScreenshotCount: activeIssueScreenshotCount,
+        syncedAt: new Date().toISOString(),
+      })
+      setSyncStatus('synced')
+    } catch {
+      setSyncStatus('error')
+    }
+  }
+
   return (
     <section
       className={draft.collapsed ? 'floating-feedback collapsed' : 'floating-feedback'}
@@ -7759,48 +7807,57 @@ function FloatingFeedbackWidget({
 
       {!draft.collapsed ? (
         <div className="floating-feedback-body">
-          <div className="floating-feedback-issue-list">
-            {issueItems.map((item, index) => (
-              <button
-                className={`floating-feedback-issue ${item.id === activeItem?.id ? 'active' : ''}`}
-                type="button"
-                onClick={() => setActiveItem(item.id)}
-                key={item.id}
+          <div className="floating-feedback-issue-switcher">
+            <label>
+              <span>{isDutch ? 'Issue kiezen' : 'Choose issue'}</span>
+              <select
+                value={activeItem?.id ?? ''}
+                onChange={(event) => setActiveItem(event.target.value)}
+                aria-label={isDutch ? 'Kies feedback issue' : 'Choose feedback issue'}
               >
-                <strong>{`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)}`}</strong>
-                <small className="floating-feedback-issue-meta">
-                  {item.surfaceLabel || item.surface || (isDutch ? 'Onbekende pagina' : 'Unknown page')}
-                  {item.surfaceContext ? ` · ${item.surfaceContext}` : ''}
-                </small>
-                <small>{item.body ? item.body.slice(0, 78) : (isDutch ? 'Typ feedback voor dit issue...' : 'Type feedback for this issue...')}</small>
-                <small className="floating-feedback-issue-meta">
-                  {countFloatingScreenshots(item.screenshots)} / {maxFloatingScreenshotsPerIssue} screenshots
-                </small>
-              </button>
-            ))}
+                {issueItems.map((item, index) => (
+                  <option value={item.id} key={item.id}>
+                    {`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)} · ${countFloatingScreenshots(item.screenshots)}/${maxFloatingScreenshotsPerIssue}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={addIssue}>
+              <Plus size={14} />
+              {isDutch ? 'Nieuw issue' : 'New issue'}
+            </button>
           </div>
-          <div className="floating-feedback-meta">
-            <strong>
-              {isDutch
-                ? `Issue ${activeItemLabel} · ${activeSurfaceLabel}`
-                : `Issue ${activeItemLabel} · ${activeSurfaceLabel}`}
-            </strong>
-            <small>
-              {isDutch
-                ? `${activeIssueTypeLabel} · ${activeItem?.rating ?? 4}/5`
-                : `${activeIssueTypeLabel} · ${activeItem?.rating ?? 4}/5`}
-              {' · '}
-              {formatByteSize(screenshotTotalBytes)}
-            </small>
-            {activeSurfaceContext ? (
-              <small className="floating-feedback-context">
-                {isDutch ? 'Context: ' : 'Context: '}
-                {activeSurfaceContext}
+
+          <div className="floating-feedback-editor-card">
+            <div className="floating-feedback-meta">
+              <strong>
+                {isDutch
+                  ? `Issue ${activeItemLabel} · ${activeSurfaceLabel}`
+                  : `Issue ${activeItemLabel} · ${activeSurfaceLabel}`}
+              </strong>
+              <small>
+                {isDutch
+                  ? `${activeIssueTypeLabel} · ${activeItem?.rating ?? 4}/5`
+                  : `${activeIssueTypeLabel} · ${activeItem?.rating ?? 4}/5`}
+                {' · '}
+                {formatByteSize(screenshotTotalBytes)}
               </small>
-            ) : null}
-          </div>
-          <small>{issueStatusLabel}</small>
-          <div className="floating-feedback-uploads">
+              {activeSurfaceContext ? (
+                <small className="floating-feedback-context">
+                  {isDutch ? 'Context: ' : 'Context: '}
+                  {activeSurfaceContext}
+                </small>
+              ) : null}
+            </div>
+            <small className="floating-feedback-status-line">{issueStatusLabel}</small>
+            <textarea
+              value={activeItem?.body ?? ''}
+              onChange={(event) => updateActiveItem({ body: clampFloatingFeedbackText(event.target.value) })}
+              placeholder={isDutch
+                ? 'Typ hier meteen je feedback voor dit issue. Alles wordt lokaal bewaard en kan je met Verstuur syncen.'
+                : 'Type feedback for this issue here. Everything is saved locally and can be synced with Submit.'}
+            />
+            <div className="floating-feedback-uploads">
               <button
                 type="button"
                 onClick={() => triggerFileUpload(activeItem?.id || '')}
@@ -7820,92 +7877,86 @@ function FloatingFeedbackWidget({
               ref={fileInputRef}
               onChange={handleFilePick}
             />
-          </div>
-          <textarea
-            value={activeItem?.body ?? ''}
-            onChange={(event) => updateActiveItem({ body: clampFloatingFeedbackText(event.target.value) })}
-            placeholder={isDutch
-              ? 'Schrijf wat je ziet, mist of prettig vindt. Dit wordt lokaal opgeslagen.'
-              : 'Type what you noticed, misses, and what feels better. This is saved automatically.'}
-          />
-          <div className="floating-feedback-previews">
-            {Array.from({ length: maxFloatingScreenshotsPerIssue }).map((_, index) => {
-              const shot = activeScreenshots[index]
-              const onDragOver = activeItem?.id ? handleScreenshotDragOver : undefined
-              const onDrop = activeItem?.id
-                ? (event) => handleScreenshotDrop(event, index)
-                : undefined
-              if (!shot) {
+            </div>
+            <div className="floating-feedback-previews">
+              {Array.from({ length: maxFloatingScreenshotsPerIssue }).map((_, index) => {
+                const shot = activeScreenshots[index]
+                const onDragOver = activeItem?.id ? handleScreenshotDragOver : undefined
+                const onDrop = activeItem?.id
+                  ? (event) => handleScreenshotDrop(event, index)
+                  : undefined
+                if (!shot) {
+                  return (
+                    <figure
+                      className="floating-feedback-preview floating-feedback-preview-empty"
+                      key={`floating-feedback-slot-${index}`}
+                      onDragOver={onDragOver}
+                      onDrop={onDrop}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          triggerSlotUpload(activeItem?.id || '', index)
+                        }
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="floating-feedback-preview-action"
+                        onClick={() => triggerSlotUpload(activeItem?.id || '', index)}
+                        aria-label={isDutch ? 'Screenshot toevoegen' : 'Add screenshot'}
+                      >
+                        <Upload size={14} />
+                        {isDutch ? 'Leeg' : 'Empty'}
+                      </button>
+                    </figure>
+                  )
+                }
+
                 return (
                   <figure
-                    className="floating-feedback-preview floating-feedback-preview-empty"
-                    key={`floating-feedback-slot-${index}`}
+                    className={`floating-feedback-preview ${draggingScreenshotIndex === index ? 'dragging' : ''}`}
+                    key={shot.id}
                     onDragOver={onDragOver}
                     onDrop={onDrop}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        triggerSlotUpload(activeItem?.id || '', index)
-                      }
+                    draggable
+                    onDragStart={(event) => {
+                      setDraggingScreenshotIndex(index)
+                      event.dataTransfer.setData('text/plain', String(index))
+                      event.dataTransfer.effectAllowed = 'move'
                     }}
+                    onDragEnd={() => setDraggingScreenshotIndex(null)}
                   >
-                    <button
-                      type="button"
-                      className="floating-feedback-preview-action"
-                      onClick={() => triggerSlotUpload(activeItem?.id || '', index)}
-                      aria-label={isDutch ? 'Screenshot toevoegen' : 'Add screenshot'}
-                    >
-                      <Upload size={14} />
-                      {isDutch ? 'Leeg' : 'Empty'}
-                    </button>
+                    <img src={shot.dataUrl} alt={shot.name} />
+                    <div className="floating-feedback-actions">
+                      <button
+                        type="button"
+                        className="floating-feedback-preview-action"
+                        onClick={() => triggerSlotUpload(activeItem?.id || '', index)}
+                        aria-label={isDutch ? 'Vervang screenshot' : 'Replace screenshot'}
+                      >
+                        <Upload size={11} />
+                      </button>
+                      <button
+                        type="button"
+                        className="floating-feedback-preview-action"
+                        onClick={() => removeScreenshot(activeItem.id, shot.id)}
+                        aria-label={isDutch ? 'Verwijder screenshot' : 'Remove screenshot'}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <span className="floating-feedback-drag-handle" aria-hidden="true">
+                      <MoreVertical size={12} />
+                    </span>
+                    <figcaption>
+                      {shot.name} · {formatByteSize(shot.size)}
+                    </figcaption>
                   </figure>
                 )
-              }
-
-              return (
-                <figure
-                  className={`floating-feedback-preview ${draggingScreenshotIndex === index ? 'dragging' : ''}`}
-                  key={shot.id}
-                  onDragOver={onDragOver}
-                  onDrop={onDrop}
-                  draggable
-                  onDragStart={(event) => {
-                    setDraggingScreenshotIndex(index)
-                    event.dataTransfer.setData('text/plain', String(index))
-                    event.dataTransfer.effectAllowed = 'move'
-                  }}
-                  onDragEnd={() => setDraggingScreenshotIndex(null)}
-                >
-                  <img src={shot.dataUrl} alt={shot.name} />
-                  <div className="floating-feedback-actions">
-                    <button
-                      type="button"
-                      className="floating-feedback-preview-action"
-                      onClick={() => triggerSlotUpload(activeItem?.id || '', index)}
-                      aria-label={isDutch ? 'Vervang screenshot' : 'Replace screenshot'}
-                    >
-                      <Upload size={11} />
-                    </button>
-                    <button
-                      type="button"
-                      className="floating-feedback-preview-action"
-                      onClick={() => removeScreenshot(activeItem.id, shot.id)}
-                      aria-label={isDutch ? 'Verwijder screenshot' : 'Remove screenshot'}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                  <span className="floating-feedback-drag-handle" aria-hidden="true">
-                    <MoreVertical size={12} />
-                  </span>
-                  <figcaption>
-                    {shot.name} · {formatByteSize(shot.size)}
-                  </figcaption>
-                </figure>
-              )
-            })}
+              })}
+            </div>
           </div>
           <div className="floating-feedback-controls">
             <div className="floating-feedback-rating" aria-label={isDutch ? 'Feedbackscore' : 'Feedback rating'}>
@@ -7933,11 +7984,39 @@ function FloatingFeedbackWidget({
           </div>
           <div className="floating-feedback-foot">
             <span>{sessionId ? statusCopy[displaySyncStatus] : (isDutch ? 'Wordt gesynct zodra je profiel start' : 'Syncs once your profile starts')}</span>
-            <button type="button" onClick={addIssue}>
-              <Plus size={14} />
-              {isDutch ? 'Nieuw issue' : 'New issue'}
+            <button
+              className="floating-feedback-submit"
+              type="button"
+              onClick={submitActiveIssue}
+              disabled={!activeItem || (!cleanBody && !activeIssueScreenshotCount)}
+            >
+              <Upload size={14} />
+              {sessionId ? (isDutch ? 'Verstuur' : 'Submit') : (isDutch ? 'Bewaar lokaal' : 'Save locally')}
             </button>
           </div>
+          <details className="floating-feedback-issue-drawer">
+            <summary>{isDutch ? `Alle issues (${issueItems.length})` : `All issues (${issueItems.length})`}</summary>
+            <div className="floating-feedback-issue-list">
+              {issueItems.map((item, index) => (
+                <button
+                  className={`floating-feedback-issue ${item.id === activeItem?.id ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => setActiveItem(item.id)}
+                  key={item.id}
+                >
+                  <strong>{`Issue ${index + 1}. · ${floatingFeedbackIssueTypeLabel(item.issueType, language)}`}</strong>
+                  <small className="floating-feedback-issue-meta">
+                    {item.surfaceLabel || item.surface || (isDutch ? 'Onbekende pagina' : 'Unknown page')}
+                    {item.surfaceContext ? ` · ${item.surfaceContext}` : ''}
+                  </small>
+                  <small>{item.body ? item.body.slice(0, 78) : (isDutch ? 'Typ feedback voor dit issue...' : 'Type feedback for this issue...')}</small>
+                  <small className="floating-feedback-issue-meta">
+                    {countFloatingScreenshots(item.screenshots)} / {maxFloatingScreenshotsPerIssue} screenshots
+                  </small>
+                </button>
+              ))}
+            </div>
+          </details>
         </div>
       ) : null}
     </section>

@@ -5510,7 +5510,7 @@ button {
   right: 24px;
   bottom: 92px;
   z-index: 28;
-  width: min(372px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
   border: 1px solid rgba(42, 45, 54, 0.11);
   border-radius: 22px;
   overflow: hidden;
@@ -5594,8 +5594,73 @@ button {
 
 .floating-feedback-body {
   display: grid;
+  gap: 14px;
+  max-height: min(76vh, 760px);
+  overflow: auto;
+  padding: 16px;
+}
+
+.floating-feedback-issue-switcher {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.floating-feedback-issue-switcher label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: #6f7480;
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.floating-feedback-issue-switcher select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(42, 45, 54, 0.12);
+  border-radius: 14px;
+  padding: 0 12px;
+  color: #2d3038;
+  background: rgba(255, 255, 255, 0.94);
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.floating-feedback-issue-switcher > button,
+.floating-feedback-submit {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  padding: 0 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--coral), #f39a77);
+  box-shadow: 0 14px 28px rgba(238, 102, 89, 0.18);
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.floating-feedback-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.floating-feedback-editor-card {
+  display: grid;
   gap: 12px;
+  border: 1px solid rgba(42, 45, 54, 0.1);
+  border-radius: 18px;
   padding: 14px;
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .floating-feedback-issue-list {
@@ -5657,9 +5722,30 @@ button {
   text-overflow: ellipsis;
 }
 
+.floating-feedback-status-line {
+  color: #1f222b;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.floating-feedback textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  border: 1px solid rgba(42, 45, 54, 0.12);
+  border-radius: 16px;
+  padding: 14px;
+  color: #252832;
+  background: rgba(255, 255, 255, 0.96);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
 .floating-feedback-uploads {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 .floating-feedback-uploads > button {
@@ -5683,7 +5769,7 @@ button {
 
 .floating-feedback-previews {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -5693,10 +5779,17 @@ button {
   display: grid;
   gap: 5px;
   align-items: start;
-  min-height: 78px;
+  min-height: 104px;
   border-radius: 10px;
   border: 1px solid rgba(42, 45, 54, 0.08);
   background: rgba(255, 255, 255, 0.86);
+}
+
+.floating-feedback-preview img {
+  width: 100%;
+  aspect-ratio: 1 / 0.74;
+  border-radius: 10px 10px 4px 4px;
+  object-fit: cover;
 }
 
 .floating-feedback-preview.dragging {
@@ -5704,7 +5797,7 @@ button {
 }
 
 .floating-feedback-preview-empty {
-  min-height: 78px;
+  min-height: 104px;
   border: 1px dashed rgba(42, 45, 54, 0.25);
   place-items: center;
   text-align: center;
@@ -5714,7 +5807,7 @@ button {
 
 .floating-feedback-preview-empty button {
   width: 100%;
-  min-height: 78px;
+  min-height: 104px;
   border: 0;
   border-radius: 10px;
   display: grid;
@@ -7675,5 +7768,145 @@ button {
   .neural-core::before,
   .neural-node.active i {
     animation: none;
+  }
+}
+
+/* Beta feedback polish: editor-first layout with compact issue drawer. */
+.floating-feedback-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.7fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.floating-feedback-rating {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.floating-feedback-rating button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(42, 45, 54, 0.12);
+  border-radius: 50%;
+  color: #6c717e;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.floating-feedback-rating button.active {
+  border-color: rgba(238, 102, 89, 0.38);
+  color: var(--coral-strong);
+  background: rgba(238, 102, 89, 0.1);
+}
+
+.floating-feedback-controls select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(42, 45, 54, 0.12);
+  border-radius: 12px;
+  padding: 0 10px;
+  color: #3f4450;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.floating-feedback-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.floating-feedback-foot > span {
+  min-width: 0;
+  color: #6f7582;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.floating-feedback-issue-drawer {
+  border: 1px solid rgba(42, 45, 54, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+  overflow: hidden;
+}
+
+.floating-feedback-issue-drawer summary {
+  cursor: pointer;
+  padding: 11px 13px;
+  color: #5b6170;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.floating-feedback-issue-drawer .floating-feedback-issue-list {
+  max-height: 190px;
+  padding: 0 12px 12px;
+}
+
+.floating-feedback-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 5px;
+}
+
+.floating-feedback-drag-handle {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #6d727c;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.floating-feedback-preview figcaption {
+  padding: 0 7px 7px;
+  color: #7b8190;
+  font-size: 10px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .floating-feedback:not(.collapsed) {
+    left: 10px !important;
+    right: 10px;
+    top: auto !important;
+    bottom: 10px;
+    width: calc(100vw - 20px);
+  }
+
+  .floating-feedback-body {
+    max-height: 82vh;
+    padding: 12px;
+  }
+
+  .floating-feedback-issue-switcher,
+  .floating-feedback-controls,
+  .floating-feedback-foot {
+    grid-template-columns: 1fr;
+  }
+
+  .floating-feedback-foot {
+    align-items: stretch;
+  }
+
+  .floating-feedback-submit,
+  .floating-feedback-issue-switcher > button {
+    width: 100%;
+  }
+
+  .floating-feedback-previews {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
