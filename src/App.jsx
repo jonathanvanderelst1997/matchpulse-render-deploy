@@ -3403,6 +3403,7 @@ function App() {
     setAuthStep('login')
     setAuthUnlockedStep(0)
     setAuthProvider('')
+    setEmailVerificationPreview('')
     setAuthContactFocusSignal((signal) => signal + 1)
     setIsBooting(false)
     showToast(profileDraft.language === 'Nederlands' ? 'Uitgelogd. Kies je account.' : 'Signed out. Choose your account.')
@@ -3433,6 +3434,7 @@ function App() {
           setAuthPasswordConfirm={setAuthPasswordConfirm}
           authResetSent={authResetSent}
           resetToken={resetToken}
+          emailVerificationPreview={emailVerificationPreview}
           setApiError={setApiError}
           authContactFocusSignal={authContactFocusSignal}
           startAuth={startAuth}
@@ -3754,6 +3756,7 @@ function AuthExperience({
   setAuthPasswordConfirm,
   authResetSent,
   resetToken,
+  emailVerificationPreview = '',
   setApiError,
   startAuth,
   sendResetEmail,
