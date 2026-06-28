@@ -8437,3 +8437,255 @@ button {
     flex-direction: column;
   }
 }
+
+/* Beta feedback 1: fuller Radar and Deep Match cards */
+.radar-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-items: stretch;
+}
+
+.radar-person-card {
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+}
+
+.radar-photo-frame,
+.radar-photo-button {
+  min-height: 330px;
+}
+
+.radar-person-copy {
+  flex: 1;
+}
+
+.match-row {
+  min-height: 212px;
+}
+
+.match-row-main {
+  align-items: stretch;
+  gap: 18px;
+}
+
+.match-row-main > .avatar {
+  width: 128px;
+  height: 128px;
+  border-radius: 30px;
+  flex: 0 0 128px;
+}
+
+.row-copy {
+  gap: 8px;
+}
+
+.row-ai-summary {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.row-ai-summary b {
+  color: var(--coral);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.row-shared {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.row-shared i {
+  max-width: 260px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(122, 198, 171, 0.14);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-style: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Beta feedback 1: messages should feel like chat, not an AI dashboard */
+.messages-layout.inbox-open {
+  grid-template-columns: minmax(320px, 620px);
+  justify-content: center;
+}
+
+.messages-layout.inbox-open .conversation-card {
+  display: none;
+}
+
+.messages-layout.chat-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.messages-layout.chat-open .conversation-list {
+  display: none;
+}
+
+.conversation-card {
+  min-height: 72vh;
+}
+
+.conversation-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px);
+}
+
+.chat-back-button,
+.compose-photo {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  border: 1px solid rgba(31, 35, 48, 0.1);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.compose-photo input {
+  display: none;
+}
+
+.compose-photo.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.message-compose {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.message-limit-note {
+  margin: 8px 0 0;
+  color: var(--coral);
+  font-weight: 800;
+  text-align: center;
+}
+
+/* Beta feedback 1: transparent AI profile insight controls */
+.profile-insight-control {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(31, 35, 48, 0.09);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(237, 252, 247, 0.74));
+}
+
+.profile-insight-control > p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.profile-insight-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-insight-groups article {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(31, 35, 48, 0.08);
+}
+
+.profile-insight-groups h3 {
+  margin: 0;
+  color: var(--coral);
+  font-size: 0.88rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-insight-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-insight-row span,
+.profile-insight-row div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.profile-insight-row span {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.profile-insight-row small {
+  color: var(--muted);
+}
+
+.profile-insight-row button {
+  border: 1px solid rgba(31, 35, 48, 0.1);
+  border-radius: 999px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.profile-insight-row button.active {
+  border-color: rgba(122, 198, 171, 0.55);
+  background: rgba(122, 198, 171, 0.18);
+  color: #28866c;
+}
+
+.profile-insight-empty {
+  border: 1px dashed rgba(31, 35, 48, 0.16);
+  border-radius: 20px;
+  padding: 14px;
+}
+
+@media (max-width: 760px) {
+  .radar-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .radar-person-card {
+    min-height: 500px;
+  }
+
+  .radar-photo-frame,
+  .radar-photo-button {
+    min-height: 310px;
+  }
+
+  .match-row-main {
+    flex-direction: column;
+  }
+
+  .match-row-main > .avatar {
+    width: 100%;
+    height: 240px;
+    flex-basis: auto;
+  }
+
+  .profile-insight-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -963,10 +963,13 @@ const authProviders = [
 const samplePhotos = ['/portraits/alex.jpg', '/portraits/zara.jpg', '/portraits/maya.jpg']
 
 const filterOptions = [
+  { id: 'ageCore', label: 'Age 25-34', test: (match) => match.age >= 25 && match.age <= 34 },
   { id: 'nearby', label: 'Within 5 km', test: (match) => Number.parseFloat(match.distance) <= 5 },
   { id: 'online', label: 'Online now', test: (match) => match.status === 'Online now' },
   { id: 'highIntent', label: 'High intent', test: (match) => match.score >= 85 },
-  { id: 'lowUncertainty', label: 'Low uncertainty', test: (match) => match.metrics.Uncertainty <= 15 },
+  { id: 'serious', label: 'Serious intent', test: (match) => match.intent.includes('Serious') },
+  { id: 'creative', label: 'Creative', test: (match) => match.intent.includes('Creative') || /creative|design|photo|music|illustrator|film/i.test(`${match.role} ${match.about}`) },
+  { id: 'active', label: 'Active', test: (match) => match.intent.includes('Active') || /sport|bike|cycling|run|hiking|walk|dance|yoga/i.test(`${match.intent.join(' ')} ${match.about}`) },
 ]
 
 const radarFilterOptions = [
@@ -975,7 +978,6 @@ const radarFilterOptions = [
   { id: 'fresh', label: 'Fresh', test: (_match, index) => index < 8 },
   { id: 'tonight', label: 'Tonight', test: (match) => match.intent.includes('Tonight') },
   { id: 'top', label: 'Top match', test: (match) => match.score >= 90 },
-  { id: 'low', label: 'Low uncertainty', test: (match) => match.metrics.Uncertainty <= 15 },
 ]
 
 const signalRules = [
@@ -994,6 +996,11 @@ const signalRules = [
   { id: 'coffee-first', label: 'Coffee first', kind: 'rhythm', terms: ['coffee', 'koffie', 'walk', 'wandeling'] },
   { id: 'city-energy', label: 'City energy', kind: 'rhythm', terms: ['city energy', 'city', 'stad', 'urban'] },
   { id: 'travel', label: 'Travel', kind: 'rhythm', terms: ['travel', 'reizen', 'reis', 'reist'] },
+  { id: 'cats', label: 'Cats', kind: 'values', terms: ['cat', 'cats', 'kat', 'katten'] },
+  { id: 'music', label: 'Music', kind: 'values', terms: ['music', 'muziek', 'concert', 'jazz', 'dj'] },
+  { id: 'photography', label: 'Photography', kind: 'attraction', terms: ['photo', 'photos', 'photography', 'foto', 'fotos', 'fotografie', 'camera'] },
+  { id: 'ai-curiosity', label: 'AI curiosity', kind: 'values', terms: ['ai', 'artificial intelligence', 'kunstmatige intelligentie'] },
+  { id: 'humor', label: 'Humor', kind: 'values', terms: ['humor', 'funny', 'grappig', 'laugh', 'lach'] },
   { id: 'sunday-reset', label: 'Sunday reset', kind: 'rhythm', terms: ['sunday', 'zondag', 'quiet morning', 'quiet mornings'] },
   { id: 'respect', label: 'Respect', kind: 'boundaries', terms: ['respect', 'respectvol'] },
   { id: 'no-drama', label: 'No drama', kind: 'boundaries', terms: ['no drama', 'drama', 'toxisch', 'toxic'] },
@@ -2527,9 +2534,6 @@ function App() {
       if (sortMode === 'Mutual pull') {
         return getAttractionDna(b).mutual - getAttractionDna(a).mutual
       }
-      if (sortMode === 'Lowest uncertainty') {
-        return a.metrics.Uncertainty - b.metrics.Uncertainty
-      }
       return defaultDiscoveryScore(b) - defaultDiscoveryScore(a)
     })
   }, [advancedFilters, hiddenMatches, matchPool, orientation, profileDraft, query, sortMode])
@@ -2688,7 +2692,7 @@ function App() {
   }
 
   function rotateSort() {
-    const order = ['Best matches this week', 'Mutual pull', 'Closest nearby', 'Lowest uncertainty']
+    const order = ['Best matches this week', 'Mutual pull', 'Closest nearby']
     const next = order[(order.indexOf(sortMode) + 1) % order.length]
     setSortMode(next)
   }
@@ -4772,7 +4776,10 @@ function MatchesView({
               match={match}
               active={match.id === selectedMatch.id}
               favorite={favorites.includes(match.id)}
-              onSelect={() => selectMatch(match.id)}
+              onSelect={() => {
+                selectMatch(match.id)
+                setActiveView('matchProfile')
+              }}
               onFavorite={() => toggleFavorite(match.id)}
               language={language}
             />
@@ -4814,6 +4821,7 @@ function MatchRow({ match, active, favorite, onSelect, onFavorite, language = vi
   const attractionDna = getAttractionDna(match)
   const lane = match.ranking?.lane ?? 'Deep fit'
   const isDutch = isDutchLanguage(language)
+  const aiReason = match.ranking?.reason ?? match.shared?.[0] ?? match.about
 
   return (
     <article className={active ? 'match-row active' : 'match-row'}>
@@ -4832,6 +4840,15 @@ function MatchRow({ match, active, favorite, onSelect, onFavorite, language = vi
           <span className="row-tags">
             {match.intent.slice(0, 3).map((tag) => (
               <i key={tag}>{isDutch ? translateRadarTag(tag) : tag}</i>
+            ))}
+          </span>
+          <span className="row-ai-summary">
+            <b>{isDutch ? 'AI reden' : 'AI reason'}</b>
+            {aiReason}
+          </span>
+          <span className="row-shared">
+            {(match.shared ?? []).slice(0, 2).map((item) => (
+              <i key={item}>{item}</i>
             ))}
           </span>
         </span>
@@ -4937,13 +4954,13 @@ function MatchProfileView({ match, memoryNotes, openModal, setActiveView, submit
   return (
     <section className="secondary-screen match-profile-screen">
       <div className="match-profile-toolbar">
+        <button type="button" onClick={() => setActiveView('matches')}>
+          <ChevronLeft size={18} />
+          {isDutch ? 'Terug naar Deep Match' : 'Back to Deep Match'}
+        </button>
         <button type="button" onClick={() => setActiveView('discover')}>
           <Compass size={18} />
-          {isDutch ? 'Radar' : 'Nearby'}
-        </button>
-        <button type="button" onClick={() => setActiveView('matches')}>
-          <HeartPulse size={18} />
-          {isDutch ? 'Open Deep Match' : 'Open in Deep Match'}
+          {isDutch ? 'Open Radar' : 'Open Radar'}
         </button>
       </div>
       <SelectedMatch
@@ -6051,8 +6068,8 @@ function MessagesView({
   }
   const isDutch = profile?.language === 'Nederlands'
   const [draft, setDraft] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
   const thread = messages.filter((message) => message.matchId === selectedMatch.id)
-  const attractionDna = getAttractionDna(selectedMatch)
   const selectedStatus = threadStatus(messages, selectedMatch.id)
   const [messageTab, setMessageTab] = useState(() => (selectedStatus === 'accepted' ? 'chats' : 'requests'))
   const incomingRequest = selectedStatus === 'request' && thread.some(
@@ -6101,33 +6118,13 @@ function MessagesView({
     !visibleThreads.some((item) => item.match.id === selectedSummary.match.id)
       ? [selectedSummary, ...visibleThreads]
       : visibleThreads
-  const strongestAxis = attractionDna.axes?.[0]
-  const sharedSignal = cleanSharedSignalText(selectedMatch.shared[0] ?? 'real conversation')
-  const suggestions = [
-    selectedStatus === 'accepted'
-      ? (isDutch
-          ? `Ik blijf denken aan ${sharedSignal.toLowerCase()}. Zin om dat rustig te ontdekken bij koffie?`
-          : `I keep thinking about ${sharedSignal.toLowerCase()}. Want to explore that over coffee?`)
-      : (isDutch
-          ? `Hey ${selectedMatch.name}, je profiel voelt bewust en warm. Welke eerste date voelt voor jou natuurlijk?`
-          : `Hey ${selectedMatch.name}, I liked that your profile feels intentional. What kind of first date feels natural to you?`),
-    isDutch
-      ? 'Ik merk dat we allebei echte gesprekken waarderen. Koffie deze week, zonder druk?'
-      : `I noticed we both seem to value real conversation. Coffee this week, low pressure?`,
-    strongestAxis
-      ? (isDutch
-          ? `Het sterkste signaal zit rond ${dnaAxisCopy(strongestAxis, profile?.language).label.toLowerCase()}. Iets simpels doen deze week en kijken of die energie echt is?`
-          : `I get the strongest signal around ${strongestAxis.label.toLowerCase()}. Want to do something simple this week and see if that energy is real?`)
-      : (isDutch
-          ? `Je profiel heeft een rustige energie. Ik wil graag meer horen over ${selectedMatch.about.toLowerCase()}`
-          : `Your profile has a calm energy. I would like to hear more about ${selectedMatch.about.toLowerCase()}`),
-  ]
-  const draftChecks = [
-    { id: 'specific', label: messageCopy.checks[0], ready: draft.length > 46 || selectedMatch.shared.some((item) => draft.includes(item.split(' ')[0])) },
-    { id: 'question', label: messageCopy.checks[1], ready: draft.includes('?') },
-    { id: 'warm', label: messageCopy.checks[2], ready: /liked|love|nice|warm|coffee|date|hear|voelt|graag|koffie|rustig/i.test(draft) },
-  ]
-  const readyDrafts = draftChecks.filter((item) => item.ready).length
+  const suggestedMessage = selectedStatus === 'accepted'
+    ? (isDutch
+        ? `Koffie deze week, zonder druk?`
+        : `Coffee this week, low pressure?`)
+    : (isDutch
+        ? `Hey ${selectedMatch.name}, je profiel voelt bewust en warm. Welke eerste date voelt voor jou natuurlijk?`
+        : `Hey ${selectedMatch.name}, I liked that your profile feels intentional. What kind of first date feels natural to you?`)
 
   function sendMessage(event) {
     event.preventDefault()
@@ -6150,7 +6147,7 @@ function MessagesView({
         body={messageCopy.body}
       />
 
-      <div className="messages-layout">
+      <div className={chatOpen ? 'messages-layout chat-open' : 'messages-layout inbox-open'}>
         <aside className="conversation-list" aria-label="Message threads">
           <div className="panel-title inline">
             <MessageSquare size={20} />
@@ -6175,7 +6172,6 @@ function MessagesView({
               <small>{requestThreads.length}</small>
             </button>
           </div>
-          <MessageRequestQuota usage={requestUsage} copy={messageCopy} />
           {sidebarThreads.length ? (
             sidebarThreads.map(({ match, count, preview, fromYou, status, requestFromThem }) => (
               <button
@@ -6185,7 +6181,10 @@ function MessagesView({
                   status === 'request' ? 'request' : '',
                 ].filter(Boolean).join(' ')}
                 type="button"
-                onClick={() => selectMatch(match.id)}
+                onClick={() => {
+                  selectMatch(match.id)
+                  setChatOpen(true)
+                }}
                 key={match.id}
               >
                 <Avatar image={match.portrait} online={match.status === 'Online now'} photoPrivacy={match.photoPrivacy} />
@@ -6214,6 +6213,9 @@ function MessagesView({
 
         <div className="conversation-card">
           <div className="conversation-head">
+            <button className="chat-back-button" type="button" onClick={() => setChatOpen(false)} aria-label={isDutch ? 'Terug naar berichten' : 'Back to messages'}>
+              <ChevronLeft size={20} />
+            </button>
             <Avatar image={selectedMatch.portrait} online photoPrivacy={selectedMatch.photoPrivacy} />
             <span>
               <strong>{selectedMatch.name}</strong>
@@ -6238,7 +6240,7 @@ function MessagesView({
               </div>
             ) : (
               <div className="conversation-actions">
-                <button type="button" onClick={() => setDraft(suggestions[0])}>
+                <button type="button" onClick={() => setDraft(suggestedMessage)}>
                   {selectedStatus === 'accepted' ? messageCopy.draftReply : messageCopy.draftRequest}
                 </button>
                 {selectedStatus === 'accepted' ? (
@@ -6249,27 +6251,6 @@ function MessagesView({
                 ) : null}
               </div>
             )}
-          </div>
-
-          <div className={selectedStatus === 'accepted' ? 'message-context accepted' : 'message-context'}>
-            <p>
-              {selectedStatus === 'accepted'
-                ? (isDutch
-                    ? `Gedeelde neuron-analyse is open. Start met ${sharedSignal.toLowerCase()}.`
-                    : `Shared neuron exchange is unlocked. Start with ${sharedSignal.toLowerCase()}.`)
-                : incomingRequest
-                  ? (isDutch
-                      ? `${selectedMatch.name} stuurde een verzoek. Accepteer om chat en gedeelde analyse te openen.`
-                      : `${selectedMatch.name} sent a request. Accept to open chat and unlock the shared-neuron analysis.`)
-                  : outgoingRequest
-                    ? (isDutch
-                        ? 'Je verzoek wacht op acceptatie. Je kan nog iets zorgzaams toevoegen, maar de volledige chat opent pas na acceptatie.'
-                        : 'Your request is pending. You can add a thoughtful follow-up, but the full chat opens after acceptance.')
-                    : (isDutch
-                        ? 'Stuur eerst een respectvol verzoek. Na acceptatie opent de chat en gedeelde neuron-analyse.'
-                        : 'Send a respectful request first. If they accept, the conversation and shared-neuron analysis unlock.')}
-            </p>
-            <span>{selectedMatch.score}% deep match</span>
           </div>
 
           {selectedPlans.length ? (
@@ -6286,68 +6267,6 @@ function MessagesView({
               ))}
             </div>
           ) : null}
-
-          <SharedNeuronPanel
-            match={selectedMatch}
-            attractionDna={attractionDna}
-            accepted={selectedStatus === 'accepted'}
-            setDraft={setDraft}
-            language={profile?.language}
-          />
-
-          <div className="message-assist-grid">
-            <article>
-              <span>
-                <Activity size={16} />
-                {messageCopy.requestQuality}
-              </span>
-              <strong>{readyDrafts}/3 {messageCopy.ready}</strong>
-              <p>
-                {isDutch
-                  ? 'Goede verzoeken zijn specifiek, warm en makkelijk te beantwoorden.'
-                  : 'Good requests are specific, warm and easy to answer. Premium gives more attempts, not permission to spam.'}
-              </p>
-            </article>
-            <article>
-              <span>
-                <WandSparkles size={16} />
-                {messageCopy.dailyRequests}
-              </span>
-              <strong>{requestUsage.remaining}/{requestUsage.limit} {messageCopy.leftToday}</strong>
-              <div className="draft-check-list">
-                {draftChecks.map((check) => (
-                  <p className={check.ready ? 'ready' : ''} key={check.id}>
-                    <i />
-                    {check.label}
-                  </p>
-                ))}
-              </div>
-            </article>
-            <article>
-              <span>
-                <Brain size={16} />
-                {messageCopy.learnedFromChat}
-              </span>
-              <strong>
-                {selectedStatus === 'accepted'
-                  ? `${Math.min(96, 42 + thread.length * 12)}% signal`
-                  : messageCopy.lockedUntilAccepted}
-              </strong>
-              <p>
-                {isDutch
-                  ? 'Respectvolle berichten mogen je private model verbeteren. Niets wordt gedeeld zonder jouw keuze.'
-                  : 'Specific, respectful messages can improve your private model. Nothing is shared with matches unless you choose it.'}
-              </p>
-            </article>
-          </div>
-
-          <div className="reply-suggestions" aria-label="AI reply suggestions">
-            {suggestions.map((suggestion) => (
-              <button type="button" onClick={() => setDraft(suggestion)} key={suggestion}>
-                {suggestion}
-              </button>
-            ))}
-          </div>
 
           <div className="message-list">
             {thread.length ? (
@@ -6371,6 +6290,20 @@ function MessagesView({
           </div>
 
           <form className="message-compose" onSubmit={sendMessage}>
+            <label className={composeDisabled ? 'compose-photo disabled' : 'compose-photo'} aria-label={isDutch ? 'Foto sturen' : 'Send photo'}>
+              <Upload size={18} />
+              <input
+                type="file"
+                accept="image/*"
+                disabled={composeDisabled}
+                onChange={(event) => {
+                  if (event.target.files?.length) {
+                    sendDirectMessage(isDutch ? 'Foto verstuurd' : 'Photo sent')
+                    event.target.value = ''
+                  }
+                }}
+              />
+            </label>
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -6389,85 +6322,13 @@ function MessagesView({
               <Send size={18} />
             </button>
           </form>
+          {requestLocked ? (
+            <p className="message-limit-note">
+              {isDutch ? 'Je hebt vandaag je gratis berichten gebruikt.' : "You have used today's free messages."}
+            </p>
+          ) : null}
         </div>
       </div>
-    </section>
-  )
-}
-
-function MessageRequestQuota({ usage, copy }) {
-  const percent = Math.min(100, Math.round((usage.used / usage.limit) * 100))
-  return (
-    <section className={usage.premium ? 'request-quota premium' : 'request-quota'}>
-      <span>
-        <Activity size={15} />
-        {usage.premium ? copy.premiumPower : copy.freePower}
-      </span>
-      <strong>{usage.remaining} {copy.leftToday}</strong>
-      <i>
-        <b style={{ width: `${percent}%` }} />
-      </i>
-      <small>
-        {usage.premium ? copy.premiumDetail : copy.freeDetail}
-      </small>
-    </section>
-  )
-}
-
-function SharedNeuronPanel({ match, attractionDna, accepted, setDraft, language = viewer.language }) {
-  const isDutch = language === 'Nederlands'
-  const axis = attractionDna.axes?.[0]
-  const sharedSignals = match.shared.slice(0, 3)
-  const bridge = axis
-    ? (isDutch
-        ? `Ik denk dat ons sterkste gedeelde signaal ${dnaAxisCopy(axis, language).label.toLowerCase()} is. Hoe ziet dat er voor jou uit in het echte leven?`
-        : `I think our strongest shared signal is ${axis.label.toLowerCase()}. What does that usually look like for you in real life?`)
-    : (isDutch
-        ? 'Ik denk dat er iets interessants zit in ons gedeelde ritme. Wat maakt connectie voor jou makkelijk?'
-        : `I think there is something interesting in our shared rhythm. What usually makes a connection feel easy for you?`)
-
-  return (
-    <section className={accepted ? 'shared-neuron-panel unlocked' : 'shared-neuron-panel'}>
-      <div className="panel-title inline">
-        <Brain size={19} />
-        <h2>{accepted ? (isDutch ? 'Gedeelde neuronen' : 'Shared neurons') : (isDutch ? 'Neuronen op slot' : 'Shared neurons locked')}</h2>
-        <strong>{accepted ? `${attractionDna.mutual}%` : (isDutch ? 'Op slot' : 'Locked')}</strong>
-      </div>
-      {accepted ? (
-        <>
-          <div className="shared-neuron-grid">
-            <article>
-              <span>{isDutch ? 'Waarden-overlap' : 'Values overlap'}</span>
-              <strong>{sharedSignals[0] ?? 'Warm alignment'}</strong>
-              <small>{isDutch ? 'Goed eerste onderwerp voor echt gesprek.' : 'Good first topic for a real conversation.'}</small>
-            </article>
-            <article>
-              <span>{isDutch ? 'Aantrekkingsritme' : 'Attraction rhythm'}</span>
-              <strong>
-                {axis
-                  ? `${dnaAxisCopy(axis, language).label} · ${axis.strength}%`
-                  : (isDutch ? 'Leert nog' : 'Still learning')}
-              </strong>
-              <small>{isDutch ? 'Privaat modelsignaal, geen ruwe memory.' : 'Private model signal, not raw personal memory.'}</small>
-            </article>
-            <article>
-              <span>{isDutch ? 'Brugvraag' : 'Bridge question'}</span>
-              <strong>{isDutch ? 'Lage druk' : 'Low pressure'}</strong>
-              <small>{isDutch ? 'Een eerlijke vraag werkt beter dan te veel uitleg.' : 'Use one honest question instead of over-explaining.'}</small>
-            </article>
-          </div>
-          <button className="neuron-draft-button" type="button" onClick={() => setDraft(bridge)}>
-            <WandSparkles size={16} />
-            {isDutch ? 'Gebruik neuron-opener' : 'Use shared-neuron opener'}
-          </button>
-        </>
-      ) : (
-        <p>
-          {isDutch
-            ? 'Na acceptatie opent de chat en zie je gedeelde waarden, aantrekkingsritme en brugvragen. Private memory blijft prive zonder jouw keuze.'
-            : 'Accepting a request opens the chat and unlocks a mutual analysis of shared values, attraction rhythm and conversation bridges. Private memory stays private unless approved.'}
-        </p>
-      )}
     </section>
   )
 }
@@ -8533,6 +8394,12 @@ function ProfileToolView({
             onRemoveSignal={removeSignalEverywhere}
             onAddProfileTag={addNeuralNodeAsProfileTag}
           />
+          <ProfileInsightControlPanel
+            signals={liveSignals}
+            profile={profile}
+            onRemoveSignal={removeSignalEverywhere}
+            onAddProfileTag={addNeuralNodeAsProfileTag}
+          />
           <form className="ai-input" onSubmit={submitAiMemory}>
             <textarea
               value={aiInput}
@@ -8655,6 +8522,105 @@ function promptIdeaLabel(prompt, language = viewer.language) {
     'visual-taste': 'Aantrekkingssmaak',
     boundary: 'Grens',
   }[prompt.id] ?? prompt.label
+}
+
+function profileInsightCategory(signal = {}, language = viewer.language) {
+  const isDutch = isDutchLanguage(language)
+  const label = signalLabel(signal, language).toLowerCase()
+  if (/cat|kat|travel|reis|muziek|music|photo|foto|ai|coffee|koffie|walk|wandelen/.test(label)) {
+    return isDutch ? 'Interesses' : 'Interests'
+  }
+  if (signal.kind === 'boundaries' || /communicatie|communication|arrogance|arrogantie|dealbreaker|grens/.test(label)) {
+    return isDutch ? 'Afknappers en grenzen' : 'Dealbreakers and boundaries'
+  }
+  if (signal.kind === 'rhythm' || /date|ritme|koffie|coffee|plan|tempo|walk/.test(label)) {
+    return isDutch ? 'Date voorkeur' : 'Date preference'
+  }
+  if (signal.kind === 'attraction') {
+    return isDutch ? 'Aantrekkingssmaak' : 'Attraction taste'
+  }
+  if (/rustig|creative|creatief|ambitious|ambitieus|introvert|extravert|humor/.test(label)) {
+    return isDutch ? 'Persoonlijkheid' : 'Personality'
+  }
+  return isDutch ? 'Waarden' : 'Values'
+}
+
+function ProfileInsightControlPanel({ signals = [], profile, onRemoveSignal, onAddProfileTag }) {
+  const language = profile?.language ?? viewer.language
+  const isDutch = isDutchLanguage(language)
+  const [visibility, setVisibility] = useState({})
+  const uniqueSignals = signals.reduce((items, signal) => {
+    const key = signalLabel(signal, language).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    if (!key || items.some((item) => item.key === key)) return items
+    return [...items, { key, signal }]
+  }, [])
+  const groups = uniqueSignals.reduce((collection, item) => {
+    const category = profileInsightCategory(item.signal, language)
+    collection[category] = [...(collection[category] ?? []), item.signal]
+    return collection
+  }, {})
+  const fallbackText = isDutch
+    ? 'Typ in de AI-box over waarden, interesses, katten, reizen, koffie, grenzen of date-ritme. MatchPulse splitst dit hier automatisch op.'
+    : 'Type in the AI box about values, interests, cats, travel, coffee, boundaries or date rhythm. MatchPulse will split it here automatically.'
+
+  return (
+    <section className="profile-insight-control">
+      <div className="panel-title inline">
+        <Eye size={19} />
+        <h2>{isDutch ? 'AI-inzichten met controle' : 'AI insights with control'}</h2>
+        <strong>{uniqueSignals.length}</strong>
+      </div>
+      <p>
+        {isDutch
+          ? 'Elk gevonden inzicht krijgt een categorie. Jij kiest wat op je profiel komt en wat alleen de AI mag gebruiken.'
+          : 'Every detected insight gets a category. You choose what appears on your profile and what stays AI-only.'}
+      </p>
+      {uniqueSignals.length ? (
+        <div className="profile-insight-groups">
+          {Object.entries(groups).map(([category, groupSignals]) => (
+            <article key={category}>
+              <h3>{category}</h3>
+              {groupSignals.map((signal) => {
+                const currentVisibility = visibility[signal.id] ?? (signal.kind === 'boundaries' ? 'ai' : 'visible')
+                return (
+                  <div className="profile-insight-row" key={signal.id}>
+                    <span>
+                      <strong>{signalLabel(signal, language)}</strong>
+                      <small>{isDutch ? 'Bron: profieltekst en AI-box' : 'Source: profile text and AI box'}</small>
+                    </span>
+                    <div>
+                      <button type="button" onClick={() => onAddProfileTag({ ...signal, value: signalLabel(signal, language) })}>
+                        {isDutch ? 'Opnemen' : 'Add'}
+                      </button>
+                      <button
+                        className={currentVisibility === 'visible' ? 'active' : ''}
+                        type="button"
+                        onClick={() => setVisibility((current) => ({ ...current, [signal.id]: 'visible' }))}
+                      >
+                        {isDutch ? 'Zichtbaar' : 'Visible'}
+                      </button>
+                      <button
+                        className={currentVisibility === 'ai' ? 'active' : ''}
+                        type="button"
+                        onClick={() => setVisibility((current) => ({ ...current, [signal.id]: 'ai' }))}
+                      >
+                        {isDutch ? 'Alleen AI' : 'AI only'}
+                      </button>
+                      <button type="button" onClick={() => onRemoveSignal(signal)}>
+                        {isDutch ? 'Verwijder' : 'Remove'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="profile-insight-empty">{fallbackText}</p>
+      )}
+    </section>
+  )
 }
 
 function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {} }) {
