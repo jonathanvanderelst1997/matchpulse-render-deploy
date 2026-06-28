@@ -7951,3 +7951,297 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Public beta visual grid polish: square photos, direct Radar grid, readable neural map. */
+.match-photo-gallery {
+  grid-template-rows: minmax(0, 1fr);
+  height: auto;
+}
+
+.match-photo-main {
+  aspect-ratio: 1 / 1;
+  min-height: 0;
+}
+
+.match-photo-main > img,
+.match-photo-main > .privacy-image {
+  height: 100%;
+  min-height: 0;
+}
+
+.match-photo-thumbs {
+  display: none;
+}
+
+.match-photo-arrow,
+.radar-photo-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(28, 30, 38, 0.56);
+  box-shadow: 0 14px 32px rgba(24, 26, 32, 0.2);
+  backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+}
+
+.match-photo-arrow.previous,
+.radar-photo-arrow.previous {
+  left: 14px;
+}
+
+.match-photo-arrow.next,
+.radar-photo-arrow.next {
+  right: 14px;
+}
+
+.match-photo-count,
+.radar-photo-count {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 3;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #fff;
+  background: rgba(28, 30, 38, 0.54);
+  font-size: 12px;
+  font-weight: 840;
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.discover-grid.radar-grid-only {
+  display: block;
+}
+
+.radar-grid-shell-full {
+  width: 100%;
+}
+
+.radar-grid-shell-full .radar-grid-toolbar {
+  box-shadow: 0 12px 34px rgba(28, 30, 38, 0.06);
+}
+
+.radar-grid {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  max-height: none;
+  overflow: visible;
+  align-items: start;
+}
+
+.radar-person-card {
+  align-content: start;
+}
+
+.radar-photo-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.radar-photo-button {
+  aspect-ratio: 1 / 1;
+}
+
+.radar-photo-dots {
+  display: none;
+}
+
+.radar-photo-arrow {
+  width: 34px;
+  height: 34px;
+}
+
+.radar-photo-arrow.previous {
+  left: 8px;
+}
+
+.radar-photo-arrow.next {
+  right: 8px;
+}
+
+.radar-photo-count {
+  bottom: 8px;
+  min-height: 24px;
+  font-size: 11px;
+}
+
+.profile-photo-strip {
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+}
+
+.profile-photo-choice {
+  position: relative;
+  display: block;
+  min-width: 0;
+  aspect-ratio: 1 / 1;
+}
+
+.profile-photo-choice-main {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0;
+  background: #fff;
+}
+
+.profile-photo-choice-main.active {
+  border-color: rgba(238, 102, 89, 0.72);
+  box-shadow: 0 0 0 4px rgba(238, 102, 89, 0.1);
+}
+
+.profile-photo-choice-main img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.profile-photo-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 999px;
+  padding: 0;
+  color: #fff;
+  background: rgba(28, 30, 38, 0.68);
+  box-shadow: 0 10px 24px rgba(28, 30, 38, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.neural-canvas {
+  height: auto;
+  min-height: 0;
+  display: grid;
+  gap: 22px;
+  overflow: visible;
+  padding: 24px;
+}
+
+.neural-canvas::before,
+.neural-canvas::after,
+.neural-canvas svg {
+  display: none;
+}
+
+.neural-core {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin: 0 auto;
+  transform: none;
+}
+
+.neural-node-board {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.neural-node-board .neural-node,
+.neural-node-board .neural-node.signal {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: auto;
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  border-radius: 18px;
+  padding: 14px;
+  text-align: left;
+  transform: none;
+}
+
+.neural-node-board .neural-node strong {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.neural-node.profile-hidden {
+  border-style: dashed;
+  opacity: 0.72;
+  background: rgba(248, 249, 250, 0.74);
+}
+
+.neural-node-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.neural-node-actions button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(229, 231, 235, 0.92);
+  border-radius: 999px;
+  color: #5d626d;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.neural-node-actions button.active:first-child {
+  color: #237d59;
+  border-color: rgba(47, 167, 114, 0.22);
+  background: rgba(92, 188, 142, 0.12);
+}
+
+.neural-node-actions button.active:last-child {
+  color: var(--coral-strong);
+  border-color: rgba(238, 102, 89, 0.24);
+  background: rgba(238, 102, 89, 0.1);
+}
+
+@media (max-width: 760px) {
+  .match-photo-main {
+    min-height: 0;
+  }
+
+  .match-photo-main > img,
+  .match-photo-main > .privacy-image {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .radar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .neural-canvas {
+    height: auto;
+    padding: 16px;
+  }
+
+  .neural-node-board {
+    grid-template-columns: 1fr;
+  }
+}

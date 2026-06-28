@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock3,
   Compass,
+  Eye,
   Flame,
   Globe2,
   Heart,
@@ -3250,6 +3251,7 @@ function App() {
         ? (await uploadProfilePhoto(sessionId, image)).photoUrl
         : image
       setProfileDraft((current) => ({ ...current, photo: uploadedImage }))
+      setOnboardingPhotos((current) => normalizeOnboardingPhotos([uploadedImage, ...current]))
       event.target.value = ''
       showToast('Profile photo added')
     } catch (error) {
@@ -3263,7 +3265,15 @@ function App() {
   }
 
   function removeOnboardingPhoto(indexToRemove) {
-    setOnboardingPhotos((current) => normalizeOnboardingPhotos(current.filter((_, index) => index !== indexToRemove)))
+    const currentPhotos = normalizeOnboardingPhotos(onboardingPhotos)
+    const removedPhoto = currentPhotos[indexToRemove]
+    const nextPhotos = normalizeOnboardingPhotos(currentPhotos.filter((_, index) => index !== indexToRemove))
+    setOnboardingPhotos(nextPhotos)
+    setProfileDraft((current) => (
+      current.photo === removedPhoto
+        ? { ...current, photo: nextPhotos[0] || viewer.photo }
+        : current
+    ))
   }
 
   function reorderOnboardingPhoto(fromIndex, toIndex) {
@@ -3888,6 +3898,8 @@ function App() {
             clearAttentionSignals={clearAttentionSignals}
             captureProfileSignal={captureProfileSignal}
             addProfilePhoto={addProfilePhoto}
+            photos={normalizeOnboardingPhotos(onboardingPhotos)}
+            removePhoto={removeOnboardingPhoto}
             saveProfileChanges={saveProfileChanges}
           />
           )
@@ -5132,36 +5144,46 @@ function MatchPhotoGallery({ match, language = viewer.language }) {
   const photoPrivacy = normalizePhotoPrivacy(match.photoPrivacy)
   const activeImage = photos[activePhoto] ?? photos[0] ?? match.photo
   const person = { ...match, photo: activeImage, language }
+  const hasMultiplePhotos = photos.length > 1
+
+  function stepPhoto(direction) {
+    if (!hasMultiplePhotos) return
+    setActivePhoto((current) => (current + direction + photos.length) % photos.length)
+  }
 
   return (
     <div className="match-photo-gallery" aria-label={isDutch ? `${match.name} foto's` : `${match.name} photos`}>
       <div className="match-photo-main">
         <PrivacyImage person={person} />
+        {hasMultiplePhotos ? (
+          <>
+            <button
+              className="match-photo-arrow previous"
+              type="button"
+              onClick={() => stepPhoto(-1)}
+              aria-label={isDutch ? 'Vorige foto' : 'Previous photo'}
+            >
+              <ChevronLeft size={22} />
+            </button>
+            <button
+              className="match-photo-arrow next"
+              type="button"
+              onClick={() => stepPhoto(1)}
+              aria-label={isDutch ? 'Volgende foto' : 'Next photo'}
+            >
+              <ChevronRight size={22} />
+            </button>
+            <span className="match-photo-count">{activePhoto + 1} / {photos.length}</span>
+          </>
+        ) : null}
         <span className="photo-consent-badge">
           <ShieldCheck size={15} />
           {photoPrivacy === 'public'
             ? (isDutch ? 'Zichtbaar met controle' : 'Visible with controls')
             : photoPrivacy === 'blurred'
               ? (isDutch ? 'Vervaagd tot chat' : 'Blurred until chat')
-              : (isDutch ? 'Alleen op verzoek' : 'By request only')}
+            : (isDutch ? 'Alleen op verzoek' : 'By request only')}
         </span>
-      </div>
-      <div className="match-photo-thumbs">
-        {photos.map((photo, index) => (
-          <button
-            className={index === activePhoto ? 'active' : ''}
-            type="button"
-            onClick={() => setActivePhoto(index)}
-            aria-label={isDutch ? `Toon foto ${index + 1}` : `Show photo ${index + 1}`}
-            key={photo}
-          >
-            {photoPrivacy === 'public' ? (
-              <img src={photo} alt="" loading="lazy" decoding="async" />
-            ) : (
-              <span />
-            )}
-          </button>
-        ))}
       </div>
     </div>
   )
@@ -5658,8 +5680,6 @@ function DiscoverView({
   profile,
   openMatchProfile,
   openMatchMessages,
-  setActiveView,
-  openModal,
   openPhotoRequest,
   recordPhotoAttention,
 }) {
@@ -5673,16 +5693,12 @@ function DiscoverView({
   }), {})
   const radarFilteredMatches = matchList.filter((match, index) => activeRadarFilter.test(match, index))
   const radarMatches = radarFilteredMatches.slice(0, 24)
-  const radarFocusMatch =
-    radarMatches.find((match) => match.id === selectedMatch.id) ??
-    radarMatches[0] ??
-    null
   const isDutch = profile?.language === 'Nederlands'
   const radarCopy = isDutch
     ? {
         kicker: 'Radar dichtbij',
         title: 'Mensen in je buurt',
-        body: 'Een visuele nearby grid met vervaagde afstand, profieltags en snelle fotopreviews.',
+        body: 'Directe nearby grid met vierkante foto’s, snelle previews en profielen naast elkaar.',
         allProfiles: 'profielen in Radar',
         filteredProfiles: 'profielen',
         location: 'Locatie vervaagd',
@@ -5725,29 +5741,8 @@ function DiscoverView({
         title={radarCopy.title}
         body={radarCopy.body}
       />
-      <RadarPrivacyStrip isDutch={isDutch} />
-      <div className="discover-grid">
-        <div className="radar-side-panel">
-          {radarFocusMatch ? (
-            <>
-              <NearbyMap match={radarFocusMatch} onOpen={() => setActiveView('matches')} isDutch={isDutch} />
-              <RadarInsightDeck
-                match={radarFocusMatch}
-                openModal={openModal}
-                openProfile={openMatchProfile}
-                setActiveView={setActiveView}
-                isDutch={isDutch}
-              />
-            </>
-          ) : (
-            <RadarEmptyPanel
-              resetRadarFilter={() => setRadarFilter('all')}
-              setActiveView={setActiveView}
-              isDutch={isDutch}
-            />
-          )}
-        </div>
-        <section className="radar-grid-shell">
+      <div className="discover-grid radar-grid-only">
+        <section className="radar-grid-shell radar-grid-shell-full">
           <div className="radar-grid-toolbar">
             <span>
               <strong>{radarFilteredMatches.length}</strong>
@@ -5776,7 +5771,7 @@ function DiscoverView({
             {radarMatches.map((match) => (
               <RadarPersonCard
                 match={match}
-                active={match.id === radarFocusMatch?.id}
+                active={match.id === selectedMatch.id}
                 photoIndex={photoIndexes[match.id] ?? 0}
                 setPhotoIndex={setRadarPhoto}
                 openProfile={openMatchProfile}
@@ -5807,143 +5802,58 @@ function DiscoverView({
   )
 }
 
-function RadarEmptyPanel({ resetRadarFilter, setActiveView, isDutch = false }) {
-  return (
-    <section className="radar-empty-panel">
-      <div className="panel-title inline">
-        <ShieldCheck size={20} />
-        <h2>{isDutch ? 'Nog geen wederzijdse Radar' : 'No reciprocal Radar yet'}</h2>
-      </div>
-      <p>
-        {isDutch
-          ? 'MatchPulse houdt de privacy-lijn strikt: je ziet alleen profielen waar de voorkeur langs beide kanten kan kloppen. Pas voorkeuren aan of maak filters ruimer voor meer mensen dichtbij.'
-          : 'MatchPulse is keeping the privacy line strict: you only see profiles that fit your preferences and can reasonably fit theirs. Add gender/preferences or loosen filters when you want a wider nearby view.'}
-      </p>
-      <div className="radar-empty-actions">
-        <button type="button" onClick={resetRadarFilter}>
-          <Compass size={16} />
-          {isDutch ? 'Reset Radar-filter' : 'Reset Radar filter'}
-        </button>
-        <button type="button" onClick={() => setActiveView('profile')}>
-          <UserRound size={16} />
-          {isDutch ? 'Voorkeuren aanpassen' : 'Edit preferences'}
-        </button>
-      </div>
-    </section>
-  )
-}
-
-function RadarPrivacyStrip({ isDutch = false }) {
-  const items = isDutch
-    ? [
-        ['Vervaagd', 'Alleen benaderde afstand'],
-        ['Wederzijds', 'Voorkeur klopt langs beide kanten'],
-        ['Foto controle', 'Zichtbaar, vervaagd of eerst vragen'],
-        ['Private AI', 'Aandachtssignalen blijven van jou'],
-      ]
-    : [
-        ['Fuzzed', 'Approx. distance only'],
-        ['Reciprocal', 'Mutual preference fit'],
-        ['Photo control', 'Visible, blurred, or ask first'],
-        ['Private AI', 'Attention signals stay yours'],
-      ]
-
-  return (
-    <div className="radar-privacy-strip" aria-label="Radar privacy model">
-      <strong>
-        <ShieldCheck size={17} />
-        {isDutch ? 'Radar met privacy eerst' : 'Privacy-first Radar'}
-      </strong>
-      {items.map(([label, detail]) => (
-        <span key={label}>
-          <strong>{label}</strong>
-          <small>{detail}</small>
-        </span>
-      ))}
-    </div>
-  )
-}
-
-function RadarInsightDeck({ match, openModal, openProfile, setActiveView, isDutch = false }) {
-  const signals = extractProfileSignals(`${match.about} ${match.shared.join(' ')}`).slice(0, 5)
-  const ranking = match.ranking ?? {
-    lane: 'Deep fit',
-    reason: 'Strong all-round compatibility across values, attraction, lifestyle and intent.',
-  }
-  const discoveryScore = defaultDiscoveryScore(match)
-  const cleanReason = String(ranking.reason ?? '')
-    .replace(/[.!?]+$/g, '')
-    .replace(/^boosted by\s+/i, '')
-    .replace(/^boosted because\s+/i, '')
-  const lane = laneLabel(ranking.lane, isDutch ? 'Nederlands' : 'English')
-  const displayAbout = displayMatchText(match.about, isDutch ? 'Nederlands' : 'English')
-  const opener = isDutch
-    ? `Je profiel voelt bewust. Ik vond dit interessant: ${displayAbout.toLowerCase()} Welke eerste date voelt voor jou echt makkelijk?`
-    : `Your profile feels intentional. I liked the part about ${match.about.toLowerCase()} What kind of first date actually feels easy for you?`
-
-  return (
-    <section className="radar-insight-deck" aria-label={`Radar actions for ${match.name}`}>
-      <div className="radar-insight-head">
-        <span>
-          <Sparkles size={18} />
-          {lane}
-        </span>
-        <strong>{discoveryScore}%</strong>
-      </div>
-      <p>
-        {isDutch
-          ? `${match.name} voelt veelbelovend. Open met een concreet detail en hou het eerste plan simpel.`
-          : `${match.name} looks promising: ${cleanReason.toLowerCase()}. Open with one specific detail and keep the first plan simple.`}
-      </p>
-      <div className="radar-signal-row">
-        {signals.map((signal) => (
-          <span key={signal.id}>{signalLabel(signal, isDutch ? 'Nederlands' : 'English')}</span>
-        ))}
-      </div>
-      <div className="radar-insight-actions">
-        <button type="button" onClick={() => openModal({ type: 'intro', seed: opener })}>
-          <Send size={16} />
-          {isDutch ? 'Openingszin' : 'Opening move'}
-        </button>
-        <button type="button" onClick={() => openModal({ type: 'shareDate' })}>
-          <ShieldCheck size={16} />
-          {isDutch ? 'Deel date' : 'Share date'}
-        </button>
-        <button type="button" onClick={() => openProfile(match.id)}>
-          <UserRound size={16} />
-          {isDutch ? 'Volledig profiel' : 'Full profile'}
-        </button>
-        <button type="button" onClick={() => setActiveView('matches')}>
-          <HeartPulse size={16} />
-          Deep Match
-        </button>
-      </div>
-    </section>
-  )
-}
-
 function RadarPersonCard({ match, active, photoIndex, setPhotoIndex, openProfile, openMessage, requestPhoto, isDutch = false }) {
   const photos = getRadarPhotos(match)
-  const currentPhoto = photos[photoIndex] ?? photos[0]
+  const safePhotoIndex = Math.min(Math.max(photoIndex, 0), Math.max(photos.length - 1, 0))
+  const currentPhoto = photos[safePhotoIndex] ?? photos[0]
   const tags = getRadarTags(match)
+  const hasMultiplePhotos = photos.length > 1
+
+  function stepPhoto(direction) {
+    if (!hasMultiplePhotos) return
+    setPhotoIndex(match.id, (safePhotoIndex + direction + photos.length) % photos.length)
+  }
 
   return (
     <article className={active ? 'radar-person-card active' : 'radar-person-card'}>
-      <button className="radar-photo-button" type="button" onClick={() => openProfile(match.id)}>
-        <PrivacyImage person={{ ...match, photo: currentPhoto, language: isDutch ? 'Nederlands' : 'English' }} />
-        <span className="radar-photo-overlay">
-          <em>{displayDistance(match.distance, isDutch ? 'Nederlands' : 'English')}</em>
-          <strong>{defaultDiscoveryScore(match)}%</strong>
-        </span>
-      </button>
+      <div className="radar-photo-frame">
+        <button className="radar-photo-button" type="button" onClick={() => openProfile(match.id)}>
+          <PrivacyImage person={{ ...match, photo: currentPhoto, language: isDutch ? 'Nederlands' : 'English' }} />
+          <span className="radar-photo-overlay">
+            <em>{displayDistance(match.distance, isDutch ? 'Nederlands' : 'English')}</em>
+            <strong>{defaultDiscoveryScore(match)}%</strong>
+          </span>
+        </button>
+        {hasMultiplePhotos ? (
+          <>
+            <button
+              className="radar-photo-arrow previous"
+              type="button"
+              onClick={() => stepPhoto(-1)}
+              aria-label={isDutch ? `Vorige foto van ${match.name}` : `Previous photo for ${match.name}`}
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button
+              className="radar-photo-arrow next"
+              type="button"
+              onClick={() => stepPhoto(1)}
+              aria-label={isDutch ? `Volgende foto van ${match.name}` : `Next photo for ${match.name}`}
+            >
+              <ChevronRight size={18} />
+            </button>
+            <span className="radar-photo-count">{safePhotoIndex + 1} / {photos.length}</span>
+          </>
+        ) : null}
+      </div>
 
-      <div className="radar-photo-dots" aria-label={isDutch ? `${match.name} foto previews` : `${match.name} photo previews`}>
+      <div className="radar-photo-dots" aria-hidden="true">
         {photos.map((photo, index) => (
           <button
-            className={index === photoIndex ? 'active' : ''}
+            className={index === safePhotoIndex ? 'active' : ''}
             type="button"
             onClick={() => setPhotoIndex(match.id, index)}
-            aria-label={isDutch ? `Toon foto ${index + 1} van ${match.name}` : `Show photo ${index + 1} for ${match.name}`}
+            tabIndex={-1}
             key={photo}
           >
             {normalizePhotoPrivacy(match.photoPrivacy) === 'public' ? (
@@ -8494,6 +8404,8 @@ function ProfileToolView({
   attentionSignals,
   captureProfileSignal,
   addProfilePhoto,
+  photos = [],
+  removePhoto = () => {},
   saveProfileChanges,
 }) {
   const toolCopy = {
@@ -8561,6 +8473,7 @@ function ProfileToolView({
     [attentionSignals, liveSignals, notes, profile],
   )
   const coachScore = readyRatio(coachItems)
+  const profilePhotos = normalizeOnboardingPhotos(photos.length ? photos : [profile.photo])
   const neuralMap = useMemo(
     () =>
       buildNeuralProfile({
@@ -8658,6 +8571,14 @@ function ProfileToolView({
     setProfile((current) => ({ ...current, photo }))
   }
 
+  function removeProfilePhoto(index, photo) {
+    removePhoto(index)
+    if (profile.photo === photo) {
+      const nextPhoto = profilePhotos.filter((item) => item !== photo)[0] || viewer.photo
+      pickProfilePhoto(nextPhoto)
+    }
+  }
+
   function updateAiInput(value) {
     setDismissedProfileSignals([])
     setAiInput(value)
@@ -8666,6 +8587,39 @@ function ProfileToolView({
   function addPromptIdea(prompt) {
     setDismissedProfileSignals([])
     setAiInput((current) => (current.trim() ? `${current.trim()}\n\n${prompt.text}` : prompt.text))
+  }
+
+  function neuralNodePreferenceGroup(node = {}) {
+    const kind = String(node.kind || '')
+    if (kind.includes('attraction') || kind.includes('dna')) return 'visualTaste'
+    if (kind.includes('boundaries')) return 'dealbreakers'
+    if (kind.includes('rhythm')) return 'dateRhythm'
+    return 'values'
+  }
+
+  function neuralNodeTagText(node = {}) {
+    return String(node.value || node.label || '')
+      .replace(/\s*·\s*\d+%/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 56) || String(node.label || 'Nieuw signaal')
+  }
+
+  function addNeuralNodeAsProfileTag(node) {
+    const group = neuralNodePreferenceGroup(node)
+    const tag = neuralNodeTagText(node)
+    setProfile((current) => {
+      const preferences = readPreferences(current)
+      const exists = preferences[group].some((item) => signalMatchesText(item, tag) || signalMatchesText(tag, item))
+      if (exists) return current
+      return {
+        ...current,
+        preferences: {
+          ...preferences,
+          [group]: [...preferences[group], tag],
+        },
+      }
+    })
   }
 
   return (
@@ -8682,16 +8636,25 @@ function ProfileToolView({
           <div className="profile-photo-editor">
             <img src={profile.photo} alt="" />
             <div className="profile-photo-strip" aria-label="Profile photo choices">
-              {samplePhotos.map((photo) => (
-                <button
-                  className={profile.photo === photo ? 'active' : ''}
-                  type="button"
-                  onClick={() => pickProfilePhoto(photo)}
-                  key={photo}
-                  aria-label="Use this profile photo"
-                >
-                  <img src={photo} alt="" />
-                </button>
+              {profilePhotos.map((photo, index) => (
+                <span className="profile-photo-choice" key={photo}>
+                  <button
+                    className={profile.photo === photo ? 'profile-photo-choice-main active' : 'profile-photo-choice-main'}
+                    type="button"
+                    onClick={() => pickProfilePhoto(photo)}
+                    aria-label="Use this profile photo"
+                  >
+                    <img src={photo} alt="" />
+                  </button>
+                  <button
+                    className="profile-photo-remove"
+                    type="button"
+                    onClick={() => removeProfilePhoto(index, photo)}
+                    aria-label={profile.language === 'Nederlands' ? 'Verwijder foto' : 'Remove photo'}
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
               ))}
               <label className="profile-photo-upload">
                 <Upload size={15} />
@@ -8797,7 +8760,12 @@ function ProfileToolView({
               <small>{toolCopy.aiToolHint}</small>
             </div>
           </div>
-          <NeuralMindMap map={neuralMap} profile={profile} onRemoveSignal={removeSignalEverywhere} />
+          <NeuralMindMap
+            map={neuralMap}
+            profile={profile}
+            onRemoveSignal={removeSignalEverywhere}
+            onAddProfileTag={addNeuralNodeAsProfileTag}
+          />
           <SignalCloud
             signals={liveSignals}
             onRemove={removeSignalEverywhere}
@@ -8992,9 +8960,21 @@ function promptIdeaLabel(prompt, language = viewer.language) {
   }[prompt.id] ?? prompt.label
 }
 
-function NeuralMindMap({ map, profile, onRemoveSignal }) {
+function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {} }) {
   const language = profile.language ?? viewer.language
   const isDutch = isDutchLanguage(language)
+  const [nodeVisibility, setNodeVisibility] = useState({})
+  const [profileTags, setProfileTags] = useState({})
+
+  function toggleNodeVisibility(nodeId) {
+    setNodeVisibility((current) => ({ ...current, [nodeId]: current[nodeId] === false }))
+  }
+
+  function addNodeAsProfileTag(node) {
+    setProfileTags((current) => ({ ...current, [node.id]: true }))
+    onAddProfileTag(node)
+  }
+
   return (
     <section className="neural-map" aria-label="Live AI profile neural map">
       <div className="neural-map-top">
@@ -9029,17 +9009,44 @@ function NeuralMindMap({ map, profile, onRemoveSignal }) {
           <strong>{map.pulseLabel}</strong>
         </div>
 
-        {map.nodes.map((node) => (
-          <article
-            className={`neural-node ${node.kind} ${node.active ? 'active' : ''}`}
-            style={{ '--node-x': `${node.x}%`, '--node-y': `${node.y}%`, '--node-size': `${node.size}px` }}
-            key={node.id}
-          >
-            <i />
-            <span>{node.label}</span>
-            <strong>{node.value}</strong>
-          </article>
-        ))}
+        <div className="neural-node-board">
+          {map.nodes.map((node) => {
+            const profileVisible = nodeVisibility[node.id] !== false
+            const isProfileTag = Boolean(profileTags[node.id])
+            return (
+              <article
+                className={`neural-node ${node.kind} ${node.active ? 'active' : ''} ${profileVisible ? '' : 'profile-hidden'}`}
+                style={{ '--node-x': `${node.x}%`, '--node-y': `${node.y}%`, '--node-size': `${node.size}px` }}
+                key={node.id}
+              >
+                <i />
+                <span>{node.label}</span>
+                <strong>{node.value}</strong>
+                <div className="neural-node-actions">
+                  <button
+                    className={profileVisible ? 'active' : ''}
+                    type="button"
+                    onClick={() => toggleNodeVisibility(node.id)}
+                    aria-pressed={profileVisible}
+                    aria-label={isDutch ? 'Zichtbaarheid wisselen' : 'Toggle visibility'}
+                  >
+                    <Eye size={13} />
+                    {profileVisible ? (isDutch ? 'Zichtbaar' : 'Visible') : (isDutch ? 'Niet zichtbaar' : 'Hidden')}
+                  </button>
+                  <button
+                    className={isProfileTag ? 'active' : ''}
+                    type="button"
+                    onClick={() => addNodeAsProfileTag(node)}
+                    aria-pressed={isProfileTag}
+                  >
+                    <Plus size={13} />
+                    {isProfileTag ? (isDutch ? 'Profieltag' : 'Profile tag') : (isDutch ? 'Neem op' : 'Add tag')}
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
       </div>
 
       <div className="neural-keywords">
