@@ -34,7 +34,6 @@ import {
   X,
 } from 'lucide-react'
 import {
-  analyzeProfileSignal,
   acceptMessageRequest as acceptMessageRequestOnServer,
   cleanupBetaTestData,
   clearAttentionSignals as clearAttentionSignalsOnServer,
@@ -756,51 +755,6 @@ function onboardingQuality(profile, signals = [], photos = []) {
   return clamp(base + signalScore, 18, 100)
 }
 
-function profileCoachItems(profile, notes = [], liveSignals = [], attentionSignals = []) {
-  const normalizedNotes = normalizeMemoryNotes(notes)
-  const preferences = profile.preferences ?? {}
-  const hasUseful = (items = []) => items.some((item) => item && item !== 'New signal')
-
-  return [
-    {
-      id: 'bio',
-      label: 'Story with texture',
-      ready: String(profile.bio ?? '').length >= 120,
-      detail: 'A bio with values, pace and attraction cues gives the AI enough signal.',
-    },
-    {
-      id: 'prompts',
-      label: 'Prompt signals',
-      ready: liveSignals.length >= 4 || normalizedNotes.length >= 3,
-      detail: 'Aim for at least four concrete signals before inviting testers.',
-    },
-    {
-      id: 'visual',
-      label: 'Attraction taste',
-      ready: hasUseful(preferences.visualTaste),
-      detail: 'Describe style, energy and presence without turning it into public filters.',
-    },
-    {
-      id: 'rhythm',
-      label: 'Date rhythm',
-      ready: hasUseful(preferences.dateRhythm),
-      detail: 'Tell the AI what easy, safe planning feels like.',
-    },
-    {
-      id: 'privacy',
-      label: 'Consent controls',
-      ready: normalizedNotes.every((note) => Boolean(note.visibility)) && Boolean(normalizedNotes.length),
-      detail: 'Every memory should have a clear visibility setting.',
-    },
-    {
-      id: 'attention',
-      label: 'Private learning',
-      ready: attentionSignals.length > 0,
-      detail: 'Private attention signals can help ranking without exposing raw behavior.',
-    },
-  ]
-}
-
 function readyRatio(items = []) {
   if (!items.length) return 0
   return Math.round((items.filter((item) => item.ready).length / items.length) * 100)
@@ -1457,24 +1411,6 @@ const initialLinkedTools = [
   { id: 'notes', label: 'Notes', connected: true, detail: 'Private reflections' },
   { id: 'location', label: 'Location', connected: true, detail: 'Nearby, fuzzed' },
 ]
-
-const initialChat = [
-  {
-    role: 'ai',
-    text: 'Tell me what you want me to remember. I can turn it into values, attraction signals, boundaries, or date preferences.',
-  },
-]
-
-function profileToolChatText(message, language = viewer.language) {
-  if (!isDutchLanguage(language)) return message.text
-  if (message.text === initialChat[0].text) {
-    return 'Vertel me wat ik moet onthouden. Ik zet het om naar waarden, aantrekking, grenzen of date-voorkeuren.'
-  }
-  if (message.text === 'Saved. I updated your values, boundaries, and match explanation model.') {
-    return 'Bewaard. Ik heb je waarden, grenzen en match-uitlegmodel bijgewerkt.'
-  }
-  return message.text
-}
 
 const profilePromptIdeas = [
   {
@@ -2279,7 +2215,6 @@ function App() {
   const [privacySettings, setPrivacySettings] = useState(defaultPrivacySettings)
   const [attentionSignals, setAttentionSignals] = useState([])
   const [aiInput, setAiInput] = useState('')
-  const [chat, setChat] = useState(initialChat)
   const [favorites, setFavorites] = useState(['julian'])
   const [plannedDates, setPlannedDates] = useState([])
   const [feedbackItems, setFeedbackItems] = useState([])
@@ -2874,26 +2809,6 @@ function App() {
     if (!text) return
 
     const memory = createOptimisticMemory(text)
-    let aiReply = profileDraft.language === 'Nederlands'
-      ? 'Bewaard. Ik heb je waarden, grenzen en match-uitlegmodel bijgewerkt.'
-      : 'Saved. I updated your values, boundaries, and match explanation model.'
-
-    if (sessionId) {
-      try {
-        const { insight } = await analyzeProfileSignal(sessionId, text)
-        aiReply = insight.summary || aiReply
-      } catch (error) {
-        aiReply = profileDraft.language === 'Nederlands'
-          ? `Lokaal bewaard. AI-inzicht kon nog niet draaien: ${error.message}`
-          : `Saved locally. AI insight could not run yet: ${error.message}`
-      }
-    }
-
-    setChat((current) => [
-      ...current,
-      { role: 'you', text },
-      { role: 'ai', text: aiReply },
-    ])
     setMemoryNotes((current) => [memory, ...normalizeMemoryNotes(current)].slice(0, 8))
     setAiInput('')
     showToast(profileDraft.language === 'Nederlands' ? 'AI-profielmemory bijgewerkt' : 'AI profile memory updated')
@@ -3889,7 +3804,6 @@ function App() {
             toggleTool={toggleTool}
             aiInput={aiInput}
             setAiInput={setAiInput}
-            chat={chat}
             submitAiMemory={submitAiMemory}
             notes={memoryNotes}
             deleteMemoryNote={deleteMemoryNote}
@@ -8397,7 +8311,6 @@ function ProfileToolView({
   toggleTool,
   aiInput,
   setAiInput,
-  chat,
   submitAiMemory,
   notes,
   deleteMemoryNote,
@@ -8449,13 +8362,9 @@ function ProfileToolView({
     },
     ...appText(profile?.language).profileTool,
   }
-  const signalGroups = [
-    { id: 'values', title: toolCopy.groups.values[0], detail: toolCopy.groups.values[1] },
-    { id: 'dealbreakers', title: toolCopy.groups.dealbreakers[0], detail: toolCopy.groups.dealbreakers[1] },
-    { id: 'visualTaste', title: toolCopy.groups.visualTaste[0], detail: toolCopy.groups.visualTaste[1] },
-    { id: 'dateRhythm', title: toolCopy.groups.dateRhythm[0], detail: toolCopy.groups.dateRhythm[1] },
-  ]
   const [dismissedProfileSignals, setDismissedProfileSignals] = useState([])
+  const [photoPositions, setPhotoPositions] = useState({})
+  const photoDragRef = useRef(null)
   const rawLiveSignals = useMemo(
     () => extractProfileSignals(`${profile.bio ?? ''} ${aiInput}`),
     [aiInput, profile.bio],
@@ -8468,12 +8377,8 @@ function ProfileToolView({
     () => buildProfileAttractionDna({ profile, attentionSignals, notes, liveSignals }),
     [attentionSignals, liveSignals, notes, profile],
   )
-  const coachItems = useMemo(
-    () => profileCoachItems(profile, notes, liveSignals, attentionSignals),
-    [attentionSignals, liveSignals, notes, profile],
-  )
-  const coachScore = readyRatio(coachItems)
   const profilePhotos = normalizeOnboardingPhotos(photos.length ? photos : [profile.photo])
+  const activePhotoPosition = photoPositions[profile.photo] ?? { x: 50, y: 50 }
   const neuralMap = useMemo(
     () =>
       buildNeuralProfile({
@@ -8516,35 +8421,6 @@ function ProfileToolView({
     }
   }
 
-  function updatePreference(group, index, value) {
-    setProfile((current) => {
-      const preferences = readPreferences(current)
-      preferences[group] = preferences[group].map((item, itemIndex) =>
-        itemIndex === index ? value : item,
-      )
-      return { ...current, preferences }
-    })
-  }
-
-  function addPreference(group) {
-    setProfile((current) => {
-      const preferences = readPreferences(current)
-      preferences[group] = [...preferences[group], current.language === 'Nederlands' ? 'Nieuw signaal' : 'New signal']
-      return { ...current, preferences }
-    })
-  }
-
-  function removePreference(group, index) {
-    setProfile((current) => {
-      const preferences = readPreferences(current)
-      preferences[group] = preferences[group].filter((_, itemIndex) => itemIndex !== index)
-      if (!preferences[group].length) {
-        preferences[group] = [current.language === 'Nederlands' ? 'Nieuw signaal' : 'New signal']
-      }
-      return { ...current, preferences }
-    })
-  }
-
   function removeSignalEverywhere(signal) {
     setDismissedProfileSignals((current) => [...new Set([...current, signal.id])])
     setAiInput((current) => removeSignalFromText(current, signal.label))
@@ -8579,14 +8455,65 @@ function ProfileToolView({
     }
   }
 
+  function profilePhotoStyle(photo = profile.photo) {
+    const position = photoPositions[photo] ?? { x: 50, y: 50 }
+    return { objectPosition: `${position.x}% ${position.y}%` }
+  }
+
+  function setProfilePhotoPosition(photo, nextPosition) {
+    setPhotoPositions((current) => {
+      const currentPosition = current[photo] ?? { x: 50, y: 50 }
+      const resolvedPosition = typeof nextPosition === 'function'
+        ? nextPosition(currentPosition)
+        : nextPosition
+      return {
+        ...current,
+        [photo]: {
+          x: Math.round(clamp(resolvedPosition.x, 0, 100)),
+          y: Math.round(clamp(resolvedPosition.y, 0, 100)),
+        },
+      }
+    })
+  }
+
+  function moveProfilePhoto(dx, dy) {
+    setProfilePhotoPosition(profile.photo, (position) => ({
+      x: position.x + dx,
+      y: position.y + dy,
+    }))
+  }
+
+  function resetProfilePhotoPosition() {
+    setProfilePhotoPosition(profile.photo, { x: 50, y: 50 })
+  }
+
+  function startProfilePhotoDrag(event) {
+    photoDragRef.current = {
+      photo: profile.photo,
+      startX: event.clientX,
+      startY: event.clientY,
+      ...activePhotoPosition,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function dragProfilePhoto(event) {
+    const drag = photoDragRef.current
+    if (!drag || drag.photo !== profile.photo) return
+
+    setProfilePhotoPosition(profile.photo, {
+      x: drag.x - (event.clientX - drag.startX) * 0.12,
+      y: drag.y - (event.clientY - drag.startY) * 0.12,
+    })
+  }
+
+  function stopProfilePhotoDrag() {
+    photoDragRef.current = null
+  }
+
   function updateAiInput(value) {
     setDismissedProfileSignals([])
     setAiInput(value)
-  }
-
-  function addPromptIdea(prompt) {
-    setDismissedProfileSignals([])
-    setAiInput((current) => (current.trim() ? `${current.trim()}\n\n${prompt.text}` : prompt.text))
   }
 
   function neuralNodePreferenceGroup(node = {}) {
@@ -8629,12 +8556,31 @@ function ProfileToolView({
         title={toolCopy.title}
         body={toolCopy.body}
       />
-      <DataConsentPrimer language={profile.language} />
 
       <div className="profile-tool-grid">
         <section className="profile-card">
           <div className="profile-photo-editor">
-            <img src={profile.photo} alt="" />
+            <div
+              className="profile-photo-stage"
+              onPointerDown={startProfilePhotoDrag}
+              onPointerMove={dragProfilePhoto}
+              onPointerUp={stopProfilePhotoDrag}
+              onPointerCancel={stopProfilePhotoDrag}
+              title={profile.language === 'Nederlands' ? 'Sleep de foto om hem goed te positioneren' : 'Drag the photo to position it'}
+            >
+              <img src={profile.photo} alt="" style={profilePhotoStyle(profile.photo)} draggable="false" />
+              <span>{profile.language === 'Nederlands' ? 'Sleep om te positioneren' : 'Drag to position'}</span>
+            </div>
+            <div className="profile-photo-position-controls" aria-label={profile.language === 'Nederlands' ? 'Foto positie' : 'Photo position'}>
+              <span>{profile.language === 'Nederlands' ? 'Foto positie' : 'Photo position'}</span>
+              <button type="button" onClick={() => moveProfilePhoto(-8, 0)} aria-label={profile.language === 'Nederlands' ? 'Foto links' : 'Move photo left'}>←</button>
+              <button type="button" onClick={() => moveProfilePhoto(0, -8)} aria-label={profile.language === 'Nederlands' ? 'Foto omhoog' : 'Move photo up'}>↑</button>
+              <button type="button" onClick={() => moveProfilePhoto(0, 8)} aria-label={profile.language === 'Nederlands' ? 'Foto omlaag' : 'Move photo down'}>↓</button>
+              <button type="button" onClick={() => moveProfilePhoto(8, 0)} aria-label={profile.language === 'Nederlands' ? 'Foto rechts' : 'Move photo right'}>→</button>
+              <button type="button" onClick={resetProfilePhotoPosition}>
+                {profile.language === 'Nederlands' ? 'Reset' : 'Reset'}
+              </button>
+            </div>
             <div className="profile-photo-strip" aria-label="Profile photo choices">
               {profilePhotos.map((photo, index) => (
                 <span className="profile-photo-choice" key={photo}>
@@ -8644,7 +8590,7 @@ function ProfileToolView({
                     onClick={() => pickProfilePhoto(photo)}
                     aria-label="Use this profile photo"
                   >
-                    <img src={photo} alt="" />
+                    <img src={photo} alt="" style={profilePhotoStyle(photo)} />
                   </button>
                   <button
                     className="profile-photo-remove"
@@ -8704,54 +8650,6 @@ function ProfileToolView({
           </div>
         </section>
 
-        <ProfileCoachCard
-          score={coachScore}
-          items={coachItems}
-          prompts={profilePromptIdeas}
-          addPromptIdea={addPromptIdea}
-          language={profile.language}
-        />
-
-        <section className="profile-preferences-card">
-          <div className="panel-title inline">
-            <Sparkles size={20} />
-            <h2>{toolCopy.signals}</h2>
-            <strong>{toolCopy.editable}</strong>
-          </div>
-          <div className="preference-editor-grid">
-            {signalGroups.map((group) => (
-              <article className="preference-editor" key={group.id}>
-                <header>
-                  <span>
-                    <strong>{group.title}</strong>
-                    <small>{group.detail}</small>
-                  </span>
-                  <button type="button" onClick={() => addPreference(group.id)} aria-label={`Add ${group.title}`}>
-                    <Plus size={15} />
-                  </button>
-                </header>
-                <div className="preference-lines">
-                  {readPreferences(profile)[group.id].map((item, index) => (
-                    <label key={`${group.id}-${index}`}>
-                      <input
-                        value={item}
-                        onChange={(event) => updatePreference(group.id, index, event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removePreference(group.id, index)}
-                        aria-label={`Remove ${item}`}
-                      >
-                        <X size={14} />
-                      </button>
-                    </label>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
         <section className="ai-tool">
           <div className="panel-title">
             <Brain size={22} />
@@ -8766,20 +8664,6 @@ function ProfileToolView({
             onRemoveSignal={removeSignalEverywhere}
             onAddProfileTag={addNeuralNodeAsProfileTag}
           />
-          <SignalCloud
-            signals={liveSignals}
-            onRemove={removeSignalEverywhere}
-            title={toolCopy.extracted}
-            emptyText={toolCopy.extractedEmpty}
-            language={profile.language}
-          />
-          <div className="ai-chat">
-            {chat.map((message, index) => (
-              <p className={message.role === 'you' ? 'you' : ''} key={`${message.role}-${index}`}>
-                {profileToolChatText(message, profile.language)}
-              </p>
-            ))}
-          </div>
           <form className="ai-input" onSubmit={submitAiMemory}>
             <textarea
               value={aiInput}
@@ -8892,62 +8776,6 @@ function ProfileToolView({
       </div>
     </section>
   )
-}
-
-function ProfileCoachCard({ score, items, prompts, addPromptIdea, language = viewer.language }) {
-  const isDutch = language === 'Nederlands'
-  return (
-    <section className="profile-coach-card">
-      <div className="panel-title inline">
-        <Activity size={20} />
-        <h2>{isDutch ? 'Profielcoach' : 'Pre-tester profile coach'}</h2>
-        <strong>{score}%</strong>
-      </div>
-      <p>
-        {isDutch
-          ? 'Maak je profiel specifiek genoeg zodat de AI helder kan uitleggen waarom iemand past.'
-          : 'Before real testers join, make the profile specific enough that the AI can explain why someone fits.'}
-      </p>
-      <div className="profile-coach-list">
-        {items.map((item) => (
-          <article className={item.ready ? 'ready' : ''} key={item.id}>
-            <i />
-            <span>
-              <strong>{profileCoachCopy(item, language).label}</strong>
-              <small>{profileCoachCopy(item, language).detail}</small>
-            </span>
-          </article>
-        ))}
-      </div>
-      <div className="prompt-studio">
-        <span>
-          <Sparkles size={16} />
-          {isDutch ? 'Prompt studio' : 'Prompt studio'}
-        </span>
-        <div>
-          {prompts.map((prompt) => (
-            <button type="button" onClick={() => addPromptIdea(prompt)} key={prompt.id}>
-              {promptIdeaLabel(prompt, language)}
-            </button>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function profileCoachCopy(item, language = viewer.language) {
-  if (language !== 'Nederlands') return item
-  const copy = {
-    bio: ['Verhaal met textuur', 'Een bio met waarden, tempo en aantrekking geeft de AI genoeg signaal.'],
-    prompts: ['Promptsignalen', 'Extra signalen uit je AI-box of memory maken matching duidelijker.'],
-    visual: ['Aantrekkingssmaak', 'Beschrijf uitstraling, energie en aanwezigheid zonder publieke harde filters.'],
-    rhythm: ['Date-ritme', 'Vertel de AI hoe veilig en makkelijk plannen moet voelen.'],
-    privacy: ['Toestemming duidelijk', 'Elke memory hoort een duidelijke zichtbaarheid te hebben.'],
-    attention: ['Private leersignalen', 'Aandachtssignalen helpen je persoonlijke model zonder publiek te worden.'],
-  }[item.id]
-
-  return copy ? { ...item, label: copy[0], detail: copy[1] } : item
 }
 
 function promptIdeaLabel(prompt, language = viewer.language) {

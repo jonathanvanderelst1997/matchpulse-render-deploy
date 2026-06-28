@@ -8245,3 +8245,152 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* Profile photo crop controls and delete buttons: override broad strip button styles. */
+.profile-photo-stage {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #f7f7f5;
+  cursor: grab;
+  touch-action: none;
+}
+
+.profile-photo-stage:active {
+  cursor: grabbing;
+}
+
+.profile-photo-stage img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.profile-photo-stage > span {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #fff;
+  background: rgba(28, 30, 38, 0.56);
+  font-size: 11px;
+  font-weight: 840;
+  backdrop-filter: blur(12px);
+}
+
+.profile-photo-position-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.profile-photo-position-controls span {
+  color: #777c86;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.profile-photo-position-controls button {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid rgba(229, 231, 235, 0.92);
+  border-radius: 999px;
+  color: #4e535e;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 860;
+}
+
+.profile-photo-strip .profile-photo-choice {
+  position: relative;
+  display: block;
+  min-width: 0;
+  aspect-ratio: 1 / 1;
+  overflow: visible;
+}
+
+.profile-photo-strip .profile-photo-choice-main {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0;
+  background: #fff;
+}
+
+.profile-photo-strip .profile-photo-choice-main.active {
+  border-color: rgba(238, 102, 89, 0.72);
+  box-shadow: 0 0 0 4px rgba(238, 102, 89, 0.1);
+}
+
+.profile-photo-strip .profile-photo-choice-main img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.profile-photo-strip .profile-photo-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 4;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 999px;
+  padding: 0;
+  color: #fff;
+  background: rgba(28, 30, 38, 0.76);
+  box-shadow: 0 10px 24px rgba(28, 30, 38, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.profile-photo-strip .profile-photo-remove:hover {
+  background: rgba(238, 102, 89, 0.9);
+}
+
+.profile-tool-grid {
+  align-items: start;
+}
+
+.profile-tool-grid > .profile-card,
+.profile-tool-grid > .ai-tool {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.profile-tool-grid > .ai-tool {
+  align-self: start;
+}
+
+.profile-tool-grid > .preference-card,
+.profile-tool-grid > .tools-card,
+.profile-tool-grid > .live-memory-card {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 980px) {
+  .profile-photo-stage {
+    max-width: none;
+  }
+}
