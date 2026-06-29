@@ -85,10 +85,10 @@ export function uploadProfilePhoto(sessionId, dataUrl) {
   })
 }
 
-export function completeOnboarding(sessionId, profile, photos) {
+export function completeOnboarding(sessionId, profile, photos, options = {}) {
   return request('/api/onboarding/complete', {
     method: 'POST',
-    body: withSession(sessionId, { profile, photos }),
+    body: withSession(sessionId, { profile, photos, ...options }),
   })
 }
 

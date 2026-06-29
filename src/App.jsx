@@ -2150,6 +2150,10 @@ function clearStoredOnboardingDraft() {
   window.localStorage.removeItem(onboardingDraftStorageKey)
 }
 
+function persistableOnboardingPhotos(photos = []) {
+  return normalizeOnboardingPhotos(photos).filter((photo) => !String(photo).startsWith('data:image/'))
+}
+
 function scopedStoredOnboardingDraft(sessionId) {
   const stored = readStoredOnboardingDraft()
   if (!stored) return null
@@ -2629,7 +2633,7 @@ function App() {
       contact: authContact,
       mode: authMode,
       profile: onboardingDraft,
-      photos: onboardingPhotos,
+      photos: persistableOnboardingPhotos(onboardingPhotos),
       updatedAt: new Date().toISOString(),
     }))
   }, [authContact, authMode, authProvider, authStep, authUnlockedStep, onboardingDraft, onboardingPhotos, sessionId])
@@ -3337,6 +3341,13 @@ function App() {
     if (previousStep) goToAuthStep(previousStep)
   }
 
+  function expireOnboardingSession() {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('matchpulse-session')
+    }
+    setSessionId('')
+  }
+
   function continueToPhotos() {
     goToAuthStep('photos')
     showToast(onboardingDraft.language === 'Nederlands' ? 'Profielbasis bewaard' : 'Profile basics saved')
@@ -3362,10 +3373,7 @@ function App() {
       const uploads = []
       for (const file of filesToUpload) {
         const image = await fileToDataUrl(file)
-        const uploadedImage = sessionId
-          ? (await uploadProfilePhoto(sessionId, image)).photoUrl
-          : image
-        uploads.push(uploadedImage)
+        uploads.push(image)
       }
 
       setOnboardingPhotos((current) => {
@@ -3392,6 +3400,9 @@ function App() {
           : 'Photo added to your profile',
       )
     } catch (error) {
+      if (error?.code === 'session_expired' || /session expired/i.test(error?.message ?? '')) {
+        expireOnboardingSession()
+      }
       showToast(error.message || (onboardingDraft.language === 'Nederlands' ? 'Kon die foto niet lezen' : 'Could not read that photo'))
     } finally {
       setPhotoUploading(false)
@@ -3412,6 +3423,15 @@ function App() {
       event.target.value = ''
       showToast('Profile photo added')
     } catch (error) {
+      if (error?.code === 'session_expired' || /session expired/i.test(error?.message ?? '')) {
+        expireOnboardingSession()
+        const image = await fileToDataUrl(file)
+        setProfileDraft((current) => ({ ...current, photo: image }))
+        setOnboardingPhotos((current) => normalizeOnboardingPhotos([image, ...current]))
+        event.target.value = ''
+        showToast(onboardingDraft.language === 'Nederlands' ? 'Foto lokaal gekozen. Account maken bewaart hem straks.' : 'Photo selected locally. Creating the account will save it.')
+        return
+      }
       showToast(error.message || 'Could not read that photo')
     }
   }
@@ -3476,11 +3496,17 @@ function App() {
     }
 
     try {
-      const state = await completeOnboarding(sessionId, completedProfile, onboardingPhotos)
+      const state = await completeOnboarding(sessionId, completedProfile, onboardingPhotos, {
+        allowDraftSession: true,
+        inviteCode: inviteFrom,
+      })
       applyAppState(state)
       goToAuthStep('invite')
       showToast(completedProfile.language === 'Nederlands' ? 'Je AI-profiel is klaar' : 'Your AI profile is ready')
     } catch (error) {
+      if (error?.code === 'session_expired' || /session expired/i.test(error?.message ?? '')) {
+        expireOnboardingSession()
+      }
       showToast(error.message)
     }
   }

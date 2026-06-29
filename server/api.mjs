@@ -1140,6 +1140,10 @@ function getSessionUser(db, sessionId) {
   return db.users.find((user) => user.id === session.userId) ?? null
 }
 
+function latestSessionId(db, userId) {
+  return [...db.sessions].reverse().find((session) => session.userId === userId)?.id ?? ''
+}
+
 function ensureUserCollections(db, userId) {
   db.memories[userId] = normalizeMemories(db.memories[userId] ?? viewer.aiMemory)
   db.linkedTools[userId] ??= defaultLinkedTools.map((tool) => ({ ...tool }))
@@ -1272,6 +1276,71 @@ function authStartPayload(db, user, session, request, meta = {}) {
     emailVerification,
     accountStatus: meta.isReturningUser ? 'existing' : 'new',
   }
+}
+
+function createDraftOnboardingSession(db, body = {}) {
+  const draftProfile = body.profile ?? {}
+  const contactInfo = normalizeContact(draftProfile.contact || draftProfile.email || draftProfile.phone || '')
+  let user = contactInfo.contact ? findUserByContact(db, contactInfo.contact) : null
+
+  if (user?.onboarded && (user.authSecret?.password || user.authSecret?.betaPin)) {
+    return {
+      error: {
+        status: 401,
+        body: {
+          error: draftProfile.language === 'Nederlands'
+            ? 'Je sessie is verlopen. Log opnieuw in om dit bestaande account te openen.'
+            : 'Your session expired. Log in again to open this existing account.',
+          code: 'session_expired',
+        },
+      },
+    }
+  }
+
+  if (!user) {
+    const fallbackContact = contactInfo.contact || `mobile-${randomUUID().slice(0, 8)}@matchpulse.local`
+    const profile = applyDraftProfileHints(
+      createDraftProfile(db.users.length + 1, 'Mobile onboarding', fallbackContact),
+      draftProfile,
+    )
+    user = {
+      id: profile.id,
+      provider: 'Mobile onboarding',
+      profile,
+      inviteCode: createInviteCode(db, profile),
+      invitedBy: body.inviteCode || '',
+      onboarded: false,
+      createdAt: now(),
+    }
+    db.users.push(user)
+    ensureUserCollections(db, user.id)
+  }
+
+  const session = { id: randomUUID(), userId: user.id, provider: 'mobile-onboarding-recovery', createdAt: now() }
+  db.sessions.push(session)
+  ensureUserCollections(db, user.id)
+  db.consentEvents.push({
+    id: randomUUID(),
+    userId: user.id,
+    type: 'mobile_onboarding_session_recovered',
+    provider: 'mobile-onboarding-recovery',
+    createdAt: now(),
+  })
+
+  return { user, session }
+}
+
+async function resolveProfilePhotosForStorage(photos = [], userId) {
+  const cleanPhotos = Array.isArray(photos) ? photos.filter(Boolean).slice(0, 6) : []
+  const storedPhotos = []
+  for (const photo of cleanPhotos) {
+    if (String(photo).startsWith('data:image/')) {
+      storedPhotos.push(await storeProfilePhoto(photo, userId))
+    } else {
+      storedPhotos.push(photo)
+    }
+  }
+  return storedPhotos
 }
 
 function createInviteCode(db, profile) {
@@ -2274,7 +2343,7 @@ function buildAppState(db, user, request) {
     .sort((a, b) => (b.discoveryScore ?? b.score) - (a.discoveryScore ?? a.score))
 
   return {
-    sessionId: db.sessions.find((session) => session.userId === user.id)?.id ?? '',
+    sessionId: latestSessionId(db, user.id),
     profile: withDatingDefaults(user.profile),
     onboarded: Boolean(user.onboarded),
     inviteCode: user.inviteCode,
@@ -2859,7 +2928,7 @@ async function routeCore(request, response) {
     if (request.method === 'POST' && requestUrl.pathname === '/api/uploads/photo') {
       const body = await readJson(request)
       const { user } = requireSession(db, body, requestUrl)
-      if (!user) return send(response, 401, { error: 'Session expired' })
+      if (!user) return send(response, 401, { error: 'Session expired', code: 'session_expired' })
 
       const photoUrl = await storeProfilePhoto(body.dataUrl, user.id)
       user.profile = {
@@ -2881,10 +2950,18 @@ async function routeCore(request, response) {
 
     if (request.method === 'POST' && requestUrl.pathname === '/api/onboarding/complete') {
       const body = await readJson(request)
-      const { user } = requireSession(db, body, requestUrl)
+      let { user } = requireSession(db, body, requestUrl)
       if (!user) {
-        send(response, 401, { error: 'Session expired' })
-        return
+        if (!body.allowDraftSession) {
+          send(response, 401, { error: 'Session expired', code: 'session_expired' })
+          return
+        }
+        const recovered = createDraftOnboardingSession(db, body)
+        if (recovered.error) {
+          send(response, recovered.error.status, recovered.error.body)
+          return
+        }
+        user = recovered.user
       }
       if (emailVerificationIsPending(user)) {
         send(response, 403, {
@@ -2900,7 +2977,8 @@ async function routeCore(request, response) {
       }
 
       const completedBio = String(body.profile?.bio ?? user.profile.bio ?? '')
-      const completedPhotos = Array.isArray(body.photos) ? body.photos.filter(Boolean).length : 0
+      const storedPhotos = await resolveProfilePhotosForStorage(body.photos, user.id)
+      const completedPhotos = storedPhotos.length
       const accountContact = normalizeContact(user.profile.contact || user.profile.email || user.profile.phone)
       const completionScore = clamp(
         64 +
@@ -2921,8 +2999,9 @@ async function routeCore(request, response) {
         phone: accountContact.phone || user.profile.phone || body.profile?.phone,
         emailVerified: Boolean(user.profile.emailVerified),
         age: cleanAge || user.profile.age,
-        photo: body.profile?.photo || body.photos?.[0] || user.profile.photo,
-        portrait: body.profile?.photo || body.photos?.[0] || user.profile.photo,
+        photo: storedPhotos[0] || body.profile?.photo || user.profile.photo,
+        portrait: storedPhotos[0] || body.profile?.photo || user.profile.photo,
+        photos: storedPhotos,
         preferences: normalizePreferences({ ...user.profile, ...body.profile }),
         profileCompletion: completionScore,
       })
