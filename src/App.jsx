@@ -1023,6 +1023,15 @@ const navItems = [
   { id: 'profile', label: 'Profile', icon: UserRound },
 ]
 
+function BrandLogo({ showText = false }) {
+  return (
+    <span className={showText ? 'brand-logo with-text' : 'brand-logo'} aria-label="MatchPulse">
+      <img src="/favicon.svg" alt="" />
+      {showText ? <strong>MatchPulse</strong> : null}
+    </span>
+  )
+}
+
 const appCopy = {
   Nederlands: {
     nav: {
@@ -2191,6 +2200,7 @@ function App() {
   )
   const [activeView, setActiveView] = useState('discover')
   const [selectedMatchId, setSelectedMatchId] = useState(matches[0].id)
+  const [matchProfileReturnView, setMatchProfileReturnView] = useState('discover')
   const [playIndex, setPlayIndex] = useState(0)
   const [authStep, setAuthStep] = useState(initialAuthState.step)
   const [authUnlockedStep, setAuthUnlockedStep] = useState(() =>
@@ -2625,9 +2635,10 @@ function App() {
     setActiveView('matches')
   }
 
-  function openMatchProfile(matchId) {
+  function openMatchProfile(matchId, returnView = 'discover') {
     const match = matchPool.find((item) => item.id === matchId)
     if (match) recordAttentionSignal(createAttentionSignal('profile', match))
+    setMatchProfileReturnView(returnView)
     setSelectedMatchId(matchId)
     setActiveView('matchProfile')
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -3673,12 +3684,9 @@ function App() {
 
         {activeView === 'matches' ? (
           <MatchesView
-            orientation={orientation}
-            setOrientation={updateInterestPreference}
             matches={visibleMatches}
             selectedMatch={selectedMatch}
             profile={profileDraft}
-            selectMatch={selectMatch}
             sortMode={sortMode}
             rotateSort={rotateSort}
             advancedFilters={advancedFilters}
@@ -3686,9 +3694,7 @@ function App() {
             favorites={favorites}
             toggleFavorite={toggleFavorite}
             openModal={setModal}
-            setActiveView={navigateToView}
-            memoryNotes={memoryNotes}
-            submitMatchFeedback={submitMatchFeedback}
+            openMatchProfile={(matchId) => openMatchProfile(matchId, 'matches')}
           />
         ) : null}
 
@@ -3714,6 +3720,7 @@ function App() {
             setActiveView={navigateToView}
             submitMatchFeedback={submitMatchFeedback}
             profile={profileDraft}
+            returnView={matchProfileReturnView}
           />
         ) : null}
 
@@ -3794,6 +3801,8 @@ function App() {
           activeView === 'settings' ? (
             <SettingsView
               profile={profileDraft}
+              orientation={orientation}
+              setOrientation={updateInterestPreference}
               privacySettings={privacySettings}
               togglePrivacySetting={togglePrivacySetting}
               hiddenCount={hiddenMatches.length}
@@ -3833,6 +3842,7 @@ function App() {
             addProfilePhoto={addProfilePhoto}
             photos={normalizeOnboardingPhotos(onboardingPhotos)}
             removePhoto={removeOnboardingPhoto}
+            reorderPhoto={reorderOnboardingPhoto}
             saveProfileChanges={saveProfileChanges}
           />
           )
@@ -3882,8 +3892,7 @@ function LoadingShell() {
     <main className="auth-shell">
       <header className="auth-topbar">
         <div className="auth-brand">
-          <Activity size={32} />
-          <span>MatchPulse</span>
+          <BrandLogo showText />
         </div>
         <span className="auth-security">
           <ShieldCheck size={17} />
@@ -4659,6 +4668,9 @@ function Rail({ activeView, setActiveView, profile }) {
         <span />
         <span />
       </div>
+      <button className="rail-brand" type="button" onClick={() => setActiveView('discover')} aria-label="MatchPulse Radar">
+        <BrandLogo />
+      </button>
       <nav className="rail-nav" aria-label="App navigation">
         {navItems.map((item) => {
           const Icon = item.icon
@@ -4688,8 +4700,7 @@ function Topbar({ query, setQuery, profile, setActiveView, onNotify }) {
   return (
     <header className="mp-topbar">
       <button className="wordmark" type="button" onClick={() => setActiveView('discover')}>
-        <Activity size={31} />
-        <span>MatchPulse</span>
+        <BrandLogo showText />
       </button>
       <label className="search-bar">
         <Search size={19} />
@@ -4721,12 +4732,9 @@ function Topbar({ query, setQuery, profile, setActiveView, onNotify }) {
 }
 
 function MatchesView({
-  orientation,
-  setOrientation,
   matches: matchList,
   selectedMatch,
   profile,
-  selectMatch,
   sortMode,
   rotateSort,
   advancedFilters,
@@ -4734,9 +4742,7 @@ function MatchesView({
   favorites,
   toggleFavorite,
   openModal,
-  setActiveView,
-  memoryNotes,
-  submitMatchFeedback,
+  openMatchProfile,
 }) {
   const language = profile?.language ?? viewer.language
   const isDutch = isDutchLanguage(language)
@@ -4749,15 +4755,6 @@ function MatchesView({
           Deep Match
           {Object.values(advancedFilters).some(Boolean) ? <i /> : null}
         </button>
-        <div className="toolbar-filter-group">
-          <small>{isDutch ? 'Toon mij' : 'Show me'}</small>
-          <Segmented
-            value={orientation}
-            options={interestPreferences}
-            labels={Object.fromEntries(interestPreferences.map((option) => [option, displayOption(option, language)]))}
-            onChange={setOrientation}
-          />
-        </div>
         <div className="toolbar-spacer" />
         <button className="sort-button" type="button" onClick={rotateSort}>
           {translatedSortMode}
@@ -4777,8 +4774,7 @@ function MatchesView({
               active={match.id === selectedMatch.id}
               favorite={favorites.includes(match.id)}
               onSelect={() => {
-                selectMatch(match.id)
-                setActiveView('matchProfile')
+                openMatchProfile(match.id)
               }}
               onFavorite={() => toggleFavorite(match.id)}
               language={language}
@@ -4793,25 +4789,6 @@ function MatchesView({
           ) : null}
         </section>
 
-        <section className="match-detail" aria-label="Selected match">
-          {matchList.length ? (
-            <SelectedMatch
-              match={selectedMatch}
-              memoryNotes={memoryNotes}
-              openModal={openModal}
-              setActiveView={setActiveView}
-              submitMatchFeedback={submitMatchFeedback}
-              language={language}
-            />
-          ) : (
-            <div className="empty-detail">
-              <Sparkles size={28} />
-              <h2>{isDutch ? 'Geen actieve match geselecteerd' : 'No active match selected'}</h2>
-              <p>{isDutch ? 'Wis filters of open Radar om opnieuw mensen te zien.' : 'Clear filters or open Radar to bring people back into view.'}</p>
-              <button type="button" onClick={activateDeepMatch}>{isDutch ? 'Terug naar Deep Match' : 'Reset to Deep Match'}</button>
-            </div>
-          )}
-        </section>
       </div>
     </section>
   )
@@ -4917,26 +4894,29 @@ function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMat
         <PulseRibbon />
       </div>
 
-      <MetricStrip metrics={match.metrics} language={language} />
-
-      <CompatibilityBreakdown match={match} language={language} />
-
       <SharedSignals match={match} language={language} />
 
-      <MatchIntelligence match={match} openModal={openModal} language={language} />
-
-      <div className="insight-grid">
-        <MemoryCard
-          title={isDutch ? 'AI Profielmemory' : 'AI Profile Memory'}
-          subtitle={isDutch ? 'Leert' : 'Learning'}
-          items={memoryNotes.slice(0, 4)}
-          onOpen={() => setActiveView('memory')}
-          language={language}
-        />
-        <NearbyMap match={match} onOpen={() => setActiveView('discover')} isDutch={isDutch} />
-      </div>
-
-      <AttractionDnaPanel dna={getAttractionDna(match)} matchName={match.name} language={language} />
+      <details className="match-ai-details">
+        <summary>
+          <Brain size={18} />
+          {isDutch ? 'AI Insights' : 'AI Insights'}
+          <span>{isDutch ? 'Compatibiliteit, DNA en uitleg' : 'Compatibility, DNA and reasoning'}</span>
+        </summary>
+        <MetricStrip metrics={match.metrics} language={language} />
+        <CompatibilityBreakdown match={match} language={language} />
+        <MatchIntelligence match={match} openModal={openModal} language={language} />
+        <div className="insight-grid">
+          <MemoryCard
+            title={isDutch ? 'AI Profielmemory' : 'AI Profile Memory'}
+            subtitle={isDutch ? 'Leert' : 'Learning'}
+            items={memoryNotes.slice(0, 4)}
+            onOpen={() => setActiveView('memory')}
+            language={language}
+          />
+          <NearbyMap match={match} onOpen={() => setActiveView('discover')} isDutch={isDutch} />
+        </div>
+        <AttractionDnaPanel dna={getAttractionDna(match)} matchName={match.name} language={language} />
+      </details>
 
       <MatchFeedbackPanel
         match={match}
@@ -4948,15 +4928,18 @@ function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMat
   )
 }
 
-function MatchProfileView({ match, memoryNotes, openModal, setActiveView, submitMatchFeedback, profile }) {
+function MatchProfileView({ match, memoryNotes, openModal, setActiveView, submitMatchFeedback, profile, returnView = 'discover' }) {
   const language = profile?.language ?? viewer.language
   const isDutch = language === 'Nederlands'
+  const backToDeepMatch = returnView === 'matches'
   return (
     <section className="secondary-screen match-profile-screen">
       <div className="match-profile-toolbar">
-        <button type="button" onClick={() => setActiveView('matches')}>
+        <button type="button" onClick={() => setActiveView(returnView)}>
           <ChevronLeft size={18} />
-          {isDutch ? 'Terug naar Deep Match' : 'Back to Deep Match'}
+          {backToDeepMatch
+            ? (isDutch ? 'Terug naar Deep Match' : 'Back to Deep Match')
+            : (isDutch ? 'Terug naar Radar' : 'Back to Radar')}
         </button>
         <button type="button" onClick={() => setActiveView('discover')}>
           <Compass size={18} />
@@ -5613,7 +5596,6 @@ function getRadarTags(match) {
     match.about.includes('travel') ? 'Travel' : '',
     normalizePhotoPrivacy(match.photoPrivacy) === 'private' ? 'Photo private' : '',
     normalizePhotoPrivacy(match.photoPrivacy) === 'blurred' ? 'Blur first' : '',
-    match.metrics.Uncertainty <= 12 ? 'Low uncertainty' : '',
     Number.parseFloat(match.distance) <= 3 ? 'Close' : '',
   ].filter(Boolean)
 
@@ -5630,7 +5612,8 @@ function DiscoverView({
   recordPhotoAttention,
 }) {
   const [photoIndexes, setPhotoIndexes] = useState({})
-  const [radarFilter, setRadarFilter] = useState('all')
+  const radarGridRef = useRef(null)
+  const [radarFilter, setRadarFilter] = useState(() => safeGetLocalStorageItem('matchpulse-radar-filter') || 'all')
   const activeRadarFilter =
     radarFilterOptions.find((filter) => filter.id === radarFilter) ?? radarFilterOptions[0]
   const radarFilterCounts = radarFilterOptions.reduce((counts, filter) => ({
@@ -5680,6 +5663,18 @@ function DiscoverView({
     openMatchMessages(matchId)
   }
 
+  function updateRadarFilter(filterId) {
+    setRadarFilter(filterId)
+    safeSetLocalStorageItem('matchpulse-radar-filter', filterId)
+  }
+
+  useEffect(() => {
+    const savedScroll = Number.parseInt(safeGetLocalStorageItem('matchpulse-radar-scroll'), 10)
+    if (!Number.isNaN(savedScroll) && radarGridRef.current) {
+      radarGridRef.current.scrollTop = savedScroll
+    }
+  }, [])
+
   return (
     <section className="secondary-screen">
       <ScreenHeading
@@ -5704,7 +5699,7 @@ function DiscoverView({
               <button
                 className={filter.id === radarFilter ? 'active' : ''}
                 type="button"
-                onClick={() => setRadarFilter(filter.id)}
+                onClick={() => updateRadarFilter(filter.id)}
                 key={filter.id}
               >
                 {filter.id === 'tonight' ? <Flame size={14} /> : null}
@@ -5713,7 +5708,12 @@ function DiscoverView({
               </button>
             ))}
           </div>
-          <div className="radar-grid" aria-label="Nearby people grid">
+          <div
+            className="radar-grid"
+            aria-label="Nearby people grid"
+            ref={radarGridRef}
+            onScroll={(event) => safeSetLocalStorageItem('matchpulse-radar-scroll', String(event.currentTarget.scrollTop))}
+          >
             {radarMatches.map((match) => (
               <RadarPersonCard
                 match={match}
@@ -5818,6 +5818,12 @@ function RadarPersonCard({ match, active, photoIndex, setPhotoIndex, openProfile
         </span>
         <small>{displayRole(match.role, isDutch ? 'Nederlands' : 'English')}</small>
       </div>
+
+      <p className="radar-shared-line">
+        <Brain size={14} />
+        <span>{isDutch ? 'Wat jullie delen' : 'What you share'}</span>
+        <strong>{match.shared?.[0] ?? match.about}</strong>
+      </p>
 
       <div className="radar-tags">
         {tags.map((tag) => (
@@ -6141,12 +6147,6 @@ function MessagesView({
 
   return (
     <section className="secondary-screen messages-screen">
-      <ScreenHeading
-        kicker={messageCopy.kicker}
-        title={messageCopy.title}
-        body={messageCopy.body}
-      />
-
       <div className={chatOpen ? 'messages-layout chat-open' : 'messages-layout inbox-open'}>
         <aside className="conversation-list" aria-label="Message threads">
           <div className="panel-title inline">
@@ -6843,6 +6843,8 @@ function SafetyRoadmapCard({ reportCount = 0, language = viewer.language }) {
 
 function SettingsView({
   profile,
+  orientation,
+  setOrientation,
   privacySettings,
   togglePrivacySetting,
   hiddenCount,
@@ -6857,6 +6859,7 @@ function SettingsView({
   feedbackCount,
 }) {
   const language = profile?.language ?? viewer.language
+  const isDutch = isDutchLanguage(language)
   const settingsCopy = appText(language).settings
   const defaultToggleCopy = {
     memoryLearning: ['AI memory learning', 'Let MatchPulse use profile notes, messages, and feedback to improve explanations.'],
@@ -6943,6 +6946,22 @@ function SettingsView({
             <UserRound size={18} />
             {copy.restart}
           </button>
+        </section>
+
+        <section className="settings-panel search-preferences-panel">
+          <div>
+            <h2>{isDutch ? 'Zoekvoorkeuren' : 'Search preferences'}</h2>
+            <p>{isDutch ? 'Kies hier wie je wil zien. Radar en Deep Match blijven daardoor rustig.' : 'Choose who you want to see here, so Radar and Deep Match stay clean.'}</p>
+          </div>
+          <div>
+            <span className="segmented-label">{isDutch ? 'Toon mij' : 'Show me'}</span>
+            <Segmented
+              value={orientation}
+              options={interestPreferences}
+              labels={Object.fromEntries(interestPreferences.map((option) => [option, displayOption(option, language)]))}
+              onChange={setOrientation}
+            />
+          </div>
         </section>
 
         <SafetyReadinessCard
@@ -8049,6 +8068,7 @@ function ProfileToolView({
   addProfilePhoto,
   photos = [],
   removePhoto = () => {},
+  reorderPhoto = () => {},
   saveProfileChanges,
 }) {
   const toolCopy = {
@@ -8094,6 +8114,8 @@ function ProfileToolView({
   }
   const [dismissedProfileSignals, setDismissedProfileSignals] = useState([])
   const [photoPositions, setPhotoPositions] = useState({})
+  const [photoZooms, setPhotoZooms] = useState({})
+  const [draggingProfilePhotoIndex, setDraggingProfilePhotoIndex] = useState(null)
   const photoDragRef = useRef(null)
   const rawLiveSignals = useMemo(
     () => extractProfileSignals(`${profile.bio ?? ''} ${aiInput}`),
@@ -8187,7 +8209,12 @@ function ProfileToolView({
 
   function profilePhotoStyle(photo = profile.photo) {
     const position = photoPositions[photo] ?? { x: 50, y: 50 }
-    return { objectPosition: `${position.x}% ${position.y}%` }
+    const zoom = photoZooms[photo] ?? 1
+    return {
+      objectPosition: `${position.x}% ${position.y}%`,
+      transform: `scale(${zoom})`,
+      transformOrigin: `${position.x}% ${position.y}%`,
+    }
   }
 
   function setProfilePhotoPosition(photo, nextPosition) {
@@ -8206,15 +8233,9 @@ function ProfileToolView({
     })
   }
 
-  function moveProfilePhoto(dx, dy) {
-    setProfilePhotoPosition(profile.photo, (position) => ({
-      x: position.x + dx,
-      y: position.y + dy,
-    }))
-  }
-
-  function resetProfilePhotoPosition() {
-    setProfilePhotoPosition(profile.photo, { x: 50, y: 50 })
+  function setProfilePhotoZoom(photo, value) {
+    const zoom = clamp(Number.parseFloat(value) || 1, 1, 1.8)
+    setPhotoZooms((current) => ({ ...current, [photo]: zoom }))
   }
 
   function startProfilePhotoDrag(event) {
@@ -8239,6 +8260,32 @@ function ProfileToolView({
 
   function stopProfilePhotoDrag() {
     photoDragRef.current = null
+  }
+
+  function handleProfilePhotoDragStart(event, index) {
+    setDraggingProfilePhotoIndex(index)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+
+  function handleProfilePhotoDragOver(event) {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleProfilePhotoDrop(event, targetIndex) {
+    event.preventDefault()
+    const sourceIndex = Number(event.dataTransfer.getData('text/plain'))
+    if (Number.isNaN(sourceIndex) || sourceIndex === targetIndex) {
+      setDraggingProfilePhotoIndex(null)
+      return
+    }
+    reorderPhoto(sourceIndex, targetIndex)
+    setDraggingProfilePhotoIndex(null)
+  }
+
+  function handleProfilePhotoDragEnd() {
+    setDraggingProfilePhotoIndex(null)
   }
 
   function updateAiInput(value) {
@@ -8301,19 +8348,31 @@ function ProfileToolView({
               <img src={profile.photo} alt="" style={profilePhotoStyle(profile.photo)} draggable="false" />
               <span>{profile.language === 'Nederlands' ? 'Sleep om te positioneren' : 'Drag to position'}</span>
             </div>
-            <div className="profile-photo-position-controls" aria-label={profile.language === 'Nederlands' ? 'Foto positie' : 'Photo position'}>
-              <span>{profile.language === 'Nederlands' ? 'Foto positie' : 'Photo position'}</span>
-              <button type="button" onClick={() => moveProfilePhoto(-8, 0)} aria-label={profile.language === 'Nederlands' ? 'Foto links' : 'Move photo left'}>←</button>
-              <button type="button" onClick={() => moveProfilePhoto(0, -8)} aria-label={profile.language === 'Nederlands' ? 'Foto omhoog' : 'Move photo up'}>↑</button>
-              <button type="button" onClick={() => moveProfilePhoto(0, 8)} aria-label={profile.language === 'Nederlands' ? 'Foto omlaag' : 'Move photo down'}>↓</button>
-              <button type="button" onClick={() => moveProfilePhoto(8, 0)} aria-label={profile.language === 'Nederlands' ? 'Foto rechts' : 'Move photo right'}>→</button>
-              <button type="button" onClick={resetProfilePhotoPosition}>
-                {profile.language === 'Nederlands' ? 'Reset' : 'Reset'}
-              </button>
-            </div>
+            <label className="profile-photo-zoom-control">
+              <span>{profile.language === 'Nederlands' ? 'Zoom' : 'Zoom'}</span>
+              <input
+                type="range"
+                min="1"
+                max="1.8"
+                step="0.05"
+                value={photoZooms[profile.photo] ?? 1}
+                onChange={(event) => setProfilePhotoZoom(profile.photo, event.target.value)}
+              />
+            </label>
             <div className="profile-photo-strip" aria-label="Profile photo choices">
               {profilePhotos.map((photo, index) => (
-                <span className="profile-photo-choice" key={photo}>
+                <span
+                  className={[
+                    'profile-photo-choice',
+                    draggingProfilePhotoIndex === index ? 'dragging' : '',
+                  ].filter(Boolean).join(' ')}
+                  draggable={profilePhotos.length > 1}
+                  onDragStart={(event) => handleProfilePhotoDragStart(event, index)}
+                  onDragOver={handleProfilePhotoDragOver}
+                  onDrop={(event) => handleProfilePhotoDrop(event, index)}
+                  onDragEnd={handleProfilePhotoDragEnd}
+                  key={photo}
+                >
                   <button
                     className={profile.photo === photo ? 'profile-photo-choice-main active' : 'profile-photo-choice-main'}
                     type="button"
