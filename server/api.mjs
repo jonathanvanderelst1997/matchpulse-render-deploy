@@ -282,6 +282,7 @@ function legacyMemoryId(text, index = 0) {
 function createMemoryNote(text, visibility = 'match_ai', source = 'manual') {
   const cleanText = String(text ?? '').replace(/\s+/g, ' ').trim()
   const displayText = cleanText.startsWith('You said:')
+    || cleanText.startsWith('AI tag:')
     || cleanText.startsWith('Profile created')
     || cleanText.startsWith('Feedback:')
     || cleanText.startsWith('Beta tester profile:')
@@ -382,7 +383,12 @@ function mergeAttentionSignalList(signals, nextSignal) {
 
 function prependMemory(db, userId, text, options = {}) {
   const memory = createMemoryNote(text, options.visibility, options.source)
-  db.memories[userId] = [memory, ...normalizeMemories(db.memories[userId])].slice(0, options.limit ?? 10)
+  const key = slugify(memory.text.replace(/^You said:\s*/i, '').replace(/^AI tag:\s*/i, ''))
+  const current = normalizeMemories(db.memories[userId]).filter((item) => {
+    const itemKey = slugify(item.text.replace(/^You said:\s*/i, '').replace(/^AI tag:\s*/i, ''))
+    return itemKey !== key
+  })
+  db.memories[userId] = [memory, ...current].slice(0, options.limit ?? 320)
   return memory
 }
 
@@ -2980,7 +2986,7 @@ async function routeCore(request, response) {
       if (text) {
         const memory = prependMemory(db, user.id, text, {
           visibility: normalizeMemoryVisibility(body.visibility),
-          source: 'ai-profile-tool',
+          source: String(body.source ?? 'ai-profile-tool').slice(0, 48),
         })
         db.consentEvents.push({
           id: randomUUID(),
@@ -2993,6 +2999,40 @@ async function routeCore(request, response) {
       }
       await saveDb(db)
       send(response, 200, buildAppState(db, user, request))
+      return
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/api/memories') {
+      const body = await readJson(request)
+      const { user } = requireSession(db, body, requestUrl)
+      if (!user) return send(response, 401, { error: 'Session expired' })
+
+      const memories = Array.isArray(body.memories) ? body.memories : []
+      const created = []
+      memories.slice(0, 220).forEach((item) => {
+        const text = String(item?.text ?? '').trim()
+        if (!text) return
+        const memory = prependMemory(db, user.id, text, {
+          visibility: normalizeMemoryVisibility(item.visibility),
+          source: String(item.source ?? 'ai-profile-tool').slice(0, 48),
+          limit: 320,
+        })
+        created.push(memory)
+        db.consentEvents.push({
+          id: randomUUID(),
+          userId: user.id,
+          type: memory.source === 'auto-tag-extractor' ? 'memory_auto_tag_created' : 'memory_created',
+          memoryId: memory.id,
+          visibility: memory.visibility,
+          createdAt: now(),
+        })
+      })
+
+      await saveDb(db)
+      send(response, 200, {
+        ...buildAppState(db, user, request),
+        learnedTags: created.filter((memory) => memory.source === 'auto-tag-extractor').length,
+      })
       return
     }
 

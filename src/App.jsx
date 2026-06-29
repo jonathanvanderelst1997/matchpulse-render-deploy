@@ -51,7 +51,7 @@ import {
   verifyEmailToken,
   resetHiddenOnServer,
   saveAttentionSignal,
-  saveMemory,
+  saveMemories,
   saveProfile,
   sendMessage as sendMessageToServer,
   sendMatchFeedback,
@@ -694,6 +694,9 @@ function normalizeMemoryNote(note, index = 0) {
       text,
       visibility: memoryVisibilityIds.has(note.visibility) ? note.visibility : 'match_ai',
       source: note.source ?? 'memory',
+      kind: note.kind ?? (text.includes('AI tag:') ? 'auto-tag' : 'memory'),
+      weight: Number.isFinite(note.weight) ? note.weight : undefined,
+      sourceText: note.sourceText ?? '',
       createdAt: note.createdAt ?? '',
       updatedAt: note.updatedAt ?? note.createdAt ?? '',
     }
@@ -705,6 +708,8 @@ function normalizeMemoryNote(note, index = 0) {
     text,
     visibility: 'match_ai',
     source: 'legacy',
+    kind: text.includes('AI tag:') ? 'auto-tag' : 'memory',
+    sourceText: '',
     createdAt: '',
     updatedAt: '',
   }
@@ -792,14 +797,64 @@ function sameMemory(left, right) {
   )
 }
 
-function createOptimisticMemory(text) {
+const maxLocalMemoryNotes = 320
+const maxAutoTagsPerSave = 180
+
+function createOptimisticMemory(text, options = {}) {
   return {
-    id: `local-${Date.now()}`,
-    text: `You said: ${text}`,
-    visibility: 'match_ai',
-    source: 'ai-profile-tool',
+    id: options.id ?? `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    text: options.raw ? text : `You said: ${text}`,
+    visibility: options.visibility ?? 'match_ai',
+    source: options.source ?? 'ai-profile-tool',
+    kind: options.kind ?? 'memory',
+    weight: options.weight,
+    sourceText: options.sourceText ?? '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+  }
+}
+
+function createAutoTagMemory(signal, sourceText = '') {
+  const label = signalLabel(signal)
+  const cleanLabel = String(label ?? '').replace(/\s+/g, ' ').trim()
+  return createOptimisticMemory(`AI tag: ${cleanLabel}`, {
+    id: `auto-${memorySlug(cleanLabel).slice(0, 72) || Date.now()}`,
+    raw: true,
+    visibility: 'match_ai',
+    source: 'auto-tag-extractor',
+    kind: signal.kind ?? 'auto-tag',
+    weight: signal.weight ?? 56,
+    sourceText: summarizeThought(sourceText),
+  })
+}
+
+function publicTagFromMemory(note) {
+  const text = normalizeMemoryNote(note).text
+    .replace(/^You said:\s*/i, '')
+    .replace(/^AI tag:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length > 64 ? text.slice(0, 61).trim() : text
+}
+
+function addProfilePreferenceTag(profile, tag, group = 'values') {
+  const cleanTag = normalizeAutoTagLabel(tag)
+  if (!cleanTag) return profile
+  const preferences = {
+    values: [...(profile.preferences?.values?.length ? profile.preferences.values : viewer.preferences.values)],
+    dealbreakers: [...(profile.preferences?.dealbreakers?.length ? profile.preferences.dealbreakers : viewer.preferences.dealbreakers)],
+    visualTaste: [...(profile.preferences?.visualTaste?.length ? profile.preferences.visualTaste : viewer.preferences.visualTaste)],
+    dateRhythm: [...(profile.preferences?.dateRhythm?.length ? profile.preferences.dateRhythm : viewer.preferences.dateRhythm)],
+  }
+  const targetGroup = preferences[group] ? group : 'values'
+  const exists = preferences[targetGroup].some((item) => signalMatchesText(item, cleanTag) || signalMatchesText(cleanTag, item))
+  if (exists) return profile
+  return {
+    ...profile,
+    preferences: {
+      ...preferences,
+      [targetGroup]: [...preferences[targetGroup], cleanTag],
+    },
   }
 }
 
@@ -1010,6 +1065,85 @@ const signalRules = [
   { id: 'no-drama', label: 'No drama', kind: 'boundaries', terms: ['no drama', 'drama', 'toxisch', 'toxic'] },
   { id: 'communication', label: 'Clear communication', kind: 'boundaries', terms: ['communication', 'communicatie', 'communiceer', 'communiceert', 'duidelijke communicatie', 'duidelijke', 'reply', 'antwoord'] },
 ]
+
+const automaticTagRules = [
+  ...signalRules,
+  { id: 'social-worker', label: 'Sociaal werker', kind: 'identity', terms: ['sociaal werker', 'social worker', 'maatschappelijk werker'] },
+  { id: 'creative-maker', label: 'Creatieveling', kind: 'values', terms: ['creatieveling', 'maker', 'creative person', 'creatief persoon'] },
+  { id: 'many-ideas', label: 'Veel ideeën', kind: 'personality', terms: ['meer ideeën dan uren', 'veel ideeen', 'veel ideeën', 'many ideas'] },
+  { id: 'helpful', label: 'Behulpzaam', kind: 'values', terms: ['behulpzaam', 'helpen', 'help mensen', 'helping people', 'helpful'] },
+  { id: 'social-impact', label: 'Maatschappelijke impact', kind: 'values', terms: ['maatschappelijke impact', 'social impact', 'maatschappij verbeteren'] },
+  { id: 'politics', label: 'Politiek', kind: 'interests', terms: ['politiek', 'politics', 'beleid', 'policy'] },
+  { id: 'society', label: 'Maatschappij', kind: 'interests', terms: ['maatschappij', 'samenleving', 'society'] },
+  { id: 'technology', label: 'Technologie', kind: 'interests', terms: ['technologie', 'technology', 'tech', 'software'] },
+  { id: 'innovation', label: 'Innovatie', kind: 'interests', terms: ['innovatie', 'innovation', 'vernieuwing'] },
+  { id: 'future-oriented', label: 'Toekomstgericht', kind: 'values', terms: ['toekomstgericht', 'future oriented', 'future-focused', 'toekomst'] },
+  { id: 'curious', label: 'Nieuwsgierig', kind: 'personality', terms: ['nieuwsgierig', 'curious', 'curiosity'] },
+  { id: 'open-minded', label: 'Open-minded', kind: 'values', terms: ['open-minded', 'open minded', 'open van geest'] },
+  { id: 'loyal', label: 'Loyaliteit', kind: 'values', terms: ['loyaal', 'loyal', 'loyaliteit', 'loyalty'] },
+  { id: 'emotionally-available', label: 'Emotioneel beschikbaar', kind: 'values', terms: ['emotioneel beschikbaar', 'emotionally available', 'emotional availability'] },
+  { id: 'problem-solver', label: 'Probleemoplossend', kind: 'personality', terms: ['probleemoplossend', 'problem solving', 'problem-solver', 'oplossingen'] },
+  { id: 'analytical', label: 'Analytisch', kind: 'personality', terms: ['analytisch', 'analytical', 'analyseer', 'analysis'] },
+  { id: 'introvert', label: 'Introvert', kind: 'personality', terms: ['introvert', 'introverted'] },
+  { id: 'extravert', label: 'Extravert', kind: 'personality', terms: ['extravert', 'extrovert', 'extraverted', 'extroverted'] },
+  { id: 'ambivert', label: 'Ambivert', kind: 'personality', terms: ['ambivert', 'soms introvert', 'soms extravert'] },
+  { id: 'music-lover', label: 'Muziekliefhebber', kind: 'interests', terms: ['muziekliefhebber', 'music lover', 'hou van muziek', 'love music'] },
+  { id: 'travel-lover', label: 'Reizen', kind: 'interests', terms: ['reizen', 'travel', 'travelling', 'traveling'] },
+  { id: 'city-explorer', label: 'Steden ontdekken', kind: 'interests', terms: ['steden ontdekken', 'cities ontdekken', 'city exploring', 'explore cities'] },
+  { id: 'cat-lover', label: 'Kattenliefhebber', kind: 'interests', terms: ['kattenliefhebber', 'katten', 'cats', 'cat person'] },
+  { id: 'walking', label: 'Wandelen', kind: 'rhythm', terms: ['wandelen', 'walking', 'walks', 'hiking'] },
+  { id: 'coffee-dates', label: 'Koffiedates', kind: 'rhythm', terms: ['koffiedates', 'coffee dates', 'koffie date', 'coffee date'] },
+  { id: 'creative-projects', label: 'Creatieve projecten', kind: 'interests', terms: ['creatieve projecten', 'creative projects', 'projecten maken'] },
+  { id: 'smart-talks', label: 'Slimme gesprekken', kind: 'values', terms: ['slimme gesprekken', 'smart conversations', 'intelligente gesprekken'] },
+  { id: 'humor-lightness', label: 'Humor en lichtheid', kind: 'values', terms: ['humor', 'grappen', 'lachen', 'laughing', 'jokes'] },
+  { id: 'deep-connection', label: 'Diepe connectie', kind: 'values', terms: ['diepe connectie', 'deep connection', 'echte connectie'] },
+  { id: 'family-minded', label: 'Familiegericht', kind: 'intent', terms: ['familie', 'family', 'kinderen', 'children', 'gezin'] },
+  { id: 'serious-relationship', label: 'Serieuze relatie', kind: 'intent', terms: ['serieuze relatie', 'serious relationship', 'vaste relatie'] },
+  { id: 'slow-dating', label: 'Rustig daten', kind: 'rhythm', terms: ['rustig daten', 'slow dating', 'niet rushen', 'no rush'] },
+  { id: 'spontaneous', label: 'Spontaan', kind: 'personality', terms: ['spontaan', 'spontaneous', 'impulsief'] },
+  { id: 'structured', label: 'Gestructureerd', kind: 'personality', terms: ['gestructureerd', 'structured', 'planning', 'gepland'] },
+  { id: 'entrepreneurial', label: 'Ondernemend', kind: 'personality', terms: ['ondernemend', 'entrepreneurial', 'ondernemen', 'startup'] },
+  { id: 'ambitious-career', label: 'Carrieregericht', kind: 'values', terms: ['carriere', 'career', 'ambitieus werk', 'professioneel groeien'] },
+  { id: 'art-design', label: 'Kunst en design', kind: 'interests', terms: ['kunst', 'art', 'design', 'museum', 'galerie', 'gallery'] },
+  { id: 'photography-love', label: 'Fotografie', kind: 'interests', terms: ['fotografie', 'photography', 'camera', 'foto'] },
+  { id: 'food-cooking', label: 'Koken en eten', kind: 'interests', terms: ['koken', 'cooking', 'food', 'eten', 'restaurant'] },
+  { id: 'sports-active', label: 'Actieve levensstijl', kind: 'rhythm', terms: ['sport', 'sports', 'fitness', 'running', 'lopen', 'cycling', 'fietsen'] },
+  { id: 'nature', label: 'Natuur', kind: 'interests', terms: ['natuur', 'nature', 'bos', 'forest', 'mountains', 'bergen'] },
+  { id: 'animals', label: 'Dierenliefhebber', kind: 'interests', terms: ['dieren', 'animals', 'hond', 'dog', 'kat', 'cat'] },
+  { id: 'books', label: 'Boeken', kind: 'interests', terms: ['boeken', 'books', 'reading', 'lezen', 'bookstore'] },
+  { id: 'film', label: 'Film en cinema', kind: 'interests', terms: ['film', 'cinema', 'movies', 'documentaire', 'documentary'] },
+  { id: 'gaming', label: 'Gaming', kind: 'interests', terms: ['gaming', 'games', 'game developer', 'videogames'] },
+  { id: 'wellness', label: 'Wellness', kind: 'rhythm', terms: ['wellness', 'yoga', 'meditatie', 'meditation', 'mindfulness'] },
+  { id: 'mental-health', label: 'Mentale gezondheid', kind: 'values', terms: ['mentale gezondheid', 'mental health', 'therapy', 'therapie'] },
+  { id: 'empathy', label: 'Empathisch', kind: 'values', terms: ['empathisch', 'empathy', 'empathie', 'inlevend'] },
+  { id: 'warm-communication', label: 'Warme communicatie', kind: 'boundaries', terms: ['warme communicatie', 'warm communication', 'zachte communicatie'] },
+  { id: 'direct-communication', label: 'Directe communicatie', kind: 'boundaries', terms: ['directe communicatie', 'direct communication', 'rechtuit'] },
+  { id: 'clear-boundaries', label: 'Duidelijke grenzen', kind: 'boundaries', terms: ['duidelijke grenzen', 'clear boundaries', 'grenzen'] },
+  { id: 'consent', label: 'Toestemming en veiligheid', kind: 'boundaries', terms: ['toestemming', 'consent', 'veilig', 'safe'] },
+  { id: 'trust', label: 'Vertrouwen', kind: 'values', terms: ['vertrouwen', 'trust', 'reliable', 'betrouwbaar'] },
+  { id: 'stability', label: 'Stabiliteit', kind: 'values', terms: ['stabiliteit', 'stability', 'stabiel'] },
+  { id: 'adventure', label: 'Avontuur', kind: 'rhythm', terms: ['avontuur', 'adventure', 'adventurous'] },
+  { id: 'calm-home', label: 'Rustig thuisgevoel', kind: 'rhythm', terms: ['thuis', 'home', 'rustig thuis', 'cozy'] },
+  { id: 'nightlife', label: 'Nachtleven', kind: 'rhythm', terms: ['nachtleven', 'nightlife', 'party', 'feest'] },
+  { id: 'morning-person', label: 'Ochtendmens', kind: 'rhythm', terms: ['ochtendmens', 'morning person', 'ochtend'] },
+  { id: 'night-owl', label: 'Nachtmens', kind: 'rhythm', terms: ['nachtmens', 'night owl', 'late nights'] },
+  { id: 'learning', label: 'Leergierig', kind: 'values', terms: ['leergierig', 'learning', 'leren', 'bijleren'] },
+  { id: 'self-development', label: 'Zelfontwikkeling', kind: 'values', terms: ['zelfontwikkeling', 'self development', 'personal growth'] },
+  { id: 'ethical', label: 'Ethisch bewust', kind: 'values', terms: ['ethiek', 'ethical', 'ethisch', 'responsible'] },
+  { id: 'climate', label: 'Klimaatbewust', kind: 'values', terms: ['klimaat', 'climate', 'sustainability', 'duurzaam'] },
+  { id: 'community', label: 'Communitygericht', kind: 'values', terms: ['community', 'gemeenschap', 'buurt'] },
+  { id: 'leadership', label: 'Leiderschap', kind: 'personality', terms: ['leiderschap', 'leadership', 'leader'] },
+  { id: 'sensitive', label: 'Gevoelig', kind: 'personality', terms: ['gevoelig', 'sensitive', 'sensitief'] },
+  { id: 'resilient', label: 'Veerkrachtig', kind: 'personality', terms: ['veerkrachtig', 'resilient', 'resilience'] },
+]
+
+const autoTagStopWords = new Set([
+  'about', 'after', 'alles', 'also', 'altijd', 'andere', 'because', 'ben', 'bij', 'but', 'can', 'dat', 'deze',
+  'door', 'een', 'eens', 'echt', 'en', 'for', 'from', 'gaan', 'geen', 'heeft', 'heel', 'hier', 'hij', 'hoe',
+  'iemand', 'iets', 'jouw', 'kan', 'like', 'maar', 'mijn', 'more', 'niet', 'nog', 'ook', 'over', 'people',
+  'persoon', 'that', 'the', 'this', 'tot', 'van', 'veel', 'voor', 'waar', 'want', 'wat', 'when', 'with',
+  'zonder', 'zoals', 'zijn',
+])
 
 const signalAnchors = {
   values: { x: 20, y: 24 },
@@ -2888,12 +3022,41 @@ function App() {
     if (!text) return
 
     const memory = createOptimisticMemory(text)
-    setMemoryNotes((current) => [memory, ...normalizeMemoryNotes(current)].slice(0, 8))
+    const existingNotes = normalizeMemoryNotes(memoryNotes)
+    const extractionCorpus = [
+      profileDraft.bio,
+      text,
+      existingNotes.map((note) => note.text).join(' '),
+    ].join('\n')
+    const autoTagMemories = extractAutomaticProfileTags(extractionCorpus, existingNotes)
+      .slice(0, maxAutoTagsPerSave)
+      .map((signal) => createAutoTagMemory(signal, extractionCorpus))
+
+    setMemoryNotes((current) => {
+      const merged = [memory, ...autoTagMemories, ...normalizeMemoryNotes(current)]
+      const seen = new Set()
+      return merged.filter((note) => {
+        const key = memorySlug(note.text.replace(/^You said:\s*/i, '').replace(/^AI tag:\s*/i, ''))
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).slice(0, maxLocalMemoryNotes)
+    })
     setAiInput('')
-    showToast(profileDraft.language === 'Nederlands' ? 'AI-profielmemory bijgewerkt' : 'AI profile memory updated')
+    showToast(profileDraft.language === 'Nederlands'
+      ? `AI-profielmemory bijgewerkt · ${autoTagMemories.length} tags geleerd`
+      : `AI profile memory updated · learned ${autoTagMemories.length} tags`)
     if (!sessionId) return
     try {
-      applyAppState(await saveMemory(sessionId, text, memory.visibility))
+      const payload = [
+        { text, visibility: memory.visibility, source: memory.source },
+        ...autoTagMemories.map((tagMemory) => ({
+          text: tagMemory.text,
+          visibility: tagMemory.visibility,
+          source: tagMemory.source,
+        })),
+      ]
+      applyAppState(await saveMemories(sessionId, payload))
     } catch (error) {
       showToast(error.message)
     }
@@ -3389,6 +3552,11 @@ function App() {
         sameMemory(item, note) ? { ...item, visibility: copy.id, updatedAt: new Date().toISOString() } : item,
       ),
     )
+    if (copy.id === 'profile') {
+      const publicTag = publicTagFromMemory(note)
+      setProfileDraft((current) => addProfilePreferenceTag(current, publicTag))
+      setOnboardingDraft((current) => addProfilePreferenceTag(current, publicTag))
+    }
     showToast(`Memory set to ${copy.label}`)
     if (!sessionId) return
     try {
@@ -8262,9 +8430,13 @@ function ProfileToolView({
   const [photoZooms, setPhotoZooms] = useState({})
   const [draggingProfilePhotoIndex, setDraggingProfilePhotoIndex] = useState(null)
   const photoDragRef = useRef(null)
+  const memoryCorpus = useMemo(
+    () => normalizeMemoryNotes(notes).map((note) => note.text).join(' '),
+    [notes],
+  )
   const rawLiveSignals = useMemo(
-    () => extractProfileSignals(`${profile.bio ?? ''} ${aiInput}`),
-    [aiInput, profile.bio],
+    () => extractProfileSignals(`${profile.bio ?? ''} ${aiInput} ${memoryCorpus}`),
+    [aiInput, memoryCorpus, profile.bio],
   )
   const liveSignals = useMemo(
     () => rawLiveSignals.filter((signal) => !dismissedProfileSignals.includes(signal.id)),
@@ -8457,18 +8629,7 @@ function ProfileToolView({
   function addNeuralNodeAsProfileTag(node) {
     const group = neuralNodePreferenceGroup(node)
     const tag = neuralNodeTagText(node)
-    setProfile((current) => {
-      const preferences = readPreferences(current)
-      const exists = preferences[group].some((item) => signalMatchesText(item, tag) || signalMatchesText(tag, item))
-      if (exists) return current
-      return {
-        ...current,
-        preferences: {
-          ...preferences,
-          [group]: [...preferences[group], tag],
-        },
-      }
-    })
+    setProfile((current) => addProfilePreferenceTag(current, tag, group))
   }
 
   return (
@@ -8743,6 +8904,18 @@ function profileInsightCategory(signal = {}, language = viewer.language) {
   if (signal.kind === 'attraction') {
     return isDutch ? 'Aantrekkingssmaak' : 'Attraction taste'
   }
+  if (signal.kind === 'identity') {
+    return isDutch ? 'Identiteit en beroep' : 'Identity and work'
+  }
+  if (signal.kind === 'interests') {
+    return isDutch ? 'Interesses' : 'Interests'
+  }
+  if (signal.kind === 'personality') {
+    return isDutch ? 'Persoonlijkheid' : 'Personality'
+  }
+  if (signal.kind === 'intent') {
+    return isDutch ? 'Datingdoel' : 'Dating intent'
+  }
   if (/rustig|creative|creatief|ambitious|ambitieus|introvert|extravert|humor/.test(label)) {
     return isDutch ? 'Persoonlijkheid' : 'Personality'
   }
@@ -8785,23 +8958,23 @@ function ProfileInsightControlPanel({ signals = [], profile, onRemoveSignal, onA
             <article key={category}>
               <h3>{category}</h3>
               {groupSignals.map((signal) => {
-                const currentVisibility = visibility[signal.id] ?? (signal.kind === 'boundaries' ? 'ai' : 'visible')
+                const currentVisibility = visibility[signal.id] ?? 'ai'
                 return (
                   <div className="profile-insight-row" key={signal.id}>
                     <span>
                       <strong>{signalLabel(signal, language)}</strong>
-                      <small>{isDutch ? 'Bron: profieltekst en AI-box' : 'Source: profile text and AI box'}</small>
+                      <small>{isDutch ? 'Standaard: alleen AI' : 'Default: AI only'}</small>
                     </span>
                     <div>
-                      <button type="button" onClick={() => onAddProfileTag({ ...signal, value: signalLabel(signal, language) })}>
-                        {isDutch ? 'Opnemen' : 'Add'}
-                      </button>
                       <button
-                        className={currentVisibility === 'visible' ? 'active' : ''}
+                        className={currentVisibility === 'profile' ? 'active' : ''}
                         type="button"
-                        onClick={() => setVisibility((current) => ({ ...current, [signal.id]: 'visible' }))}
+                        onClick={() => {
+                          setVisibility((current) => ({ ...current, [signal.id]: 'profile' }))
+                          onAddProfileTag({ ...signal, value: signalLabel(signal, language) })
+                        }}
                       >
-                        {isDutch ? 'Zichtbaar' : 'Visible'}
+                        {isDutch ? 'Publiek' : 'Public'}
                       </button>
                       <button
                         className={currentVisibility === 'ai' ? 'active' : ''}
@@ -8833,8 +9006,10 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
   const [nodeVisibility, setNodeVisibility] = useState({})
   const [profileTags, setProfileTags] = useState({})
 
-  function toggleNodeVisibility(nodeId) {
-    setNodeVisibility((current) => ({ ...current, [nodeId]: current[nodeId] === false }))
+  function toggleNodeVisibility(node) {
+    const isPublic = nodeVisibility[node.id] === true || profileTags[node.id]
+    setNodeVisibility((current) => ({ ...current, [node.id]: !isPublic }))
+    if (!isPublic) addNodeAsProfileTag(node)
   }
 
   function addNodeAsProfileTag(node) {
@@ -8878,8 +9053,8 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
 
         <div className="neural-node-board">
           {map.nodes.map((node) => {
-            const profileVisible = nodeVisibility[node.id] !== false
             const isProfileTag = Boolean(profileTags[node.id])
+            const profileVisible = nodeVisibility[node.id] === true || isProfileTag
             return (
               <article
                 className={`neural-node ${node.kind} ${node.active ? 'active' : ''} ${profileVisible ? '' : 'profile-hidden'}`}
@@ -8893,12 +9068,12 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
                   <button
                     className={profileVisible ? 'active' : ''}
                     type="button"
-                    onClick={() => toggleNodeVisibility(node.id)}
+                    onClick={() => toggleNodeVisibility(node)}
                     aria-pressed={profileVisible}
                     aria-label={isDutch ? 'Zichtbaarheid wisselen' : 'Toggle visibility'}
                   >
                     <Eye size={13} />
-                    {profileVisible ? (isDutch ? 'Zichtbaar' : 'Visible') : (isDutch ? 'Niet zichtbaar' : 'Hidden')}
+                    {profileVisible ? (isDutch ? 'Publiek' : 'Public') : (isDutch ? 'Alleen AI' : 'AI only')}
                   </button>
                   <button
                     className={isProfileTag ? 'active' : ''}
@@ -8946,7 +9121,7 @@ function buildNeuralProfile({
   const liveText = aiInput.trim()
   const normalizedNotes = normalizeMemoryNotes(notes)
   const firstMemory = normalizedNotes[0] ? memoryThoughtText(normalizedNotes[0]) : 'Still learning your pattern'
-  const signalNodes = liveSignals.slice(0, 8).map((signal, index) => {
+  const signalNodes = liveSignals.slice(0, 24).map((signal, index) => {
     const anchor = signalAnchors[signal.kind] ?? signalAnchors.live
     const columnOffset = ((index % 3) - 1) * 8
     const rowOffset = Math.floor(index / 3) * 7
@@ -8996,7 +9171,7 @@ function buildNeuralProfile({
     99,
     Math.max(
       74,
-      profile.profileCompletion - 7 + connectedTools.length * 2 + liveSignals.length + attentionSignals.length
+      profile.profileCompletion - 7 + connectedTools.length * 2 + Math.min(40, liveSignals.length) + attentionSignals.length
         + (attractionDna?.axes?.length ?? 0),
     ),
   )
@@ -9005,7 +9180,7 @@ function buildNeuralProfile({
     learning,
     pulseLabel: liveText ? (isDutch ? 'wordt nu gevormd' : 'rewiring now') : (isDutch ? 'stabiele memory' : 'stable memory'),
     keywords: liveSignals.length
-      ? liveSignals.slice(0, 10)
+      ? liveSignals.slice(0, 48)
       : hasSignalText
         ? []
         : extractProfileSignals(liveKeywords.join(' ') || 'honesty calm chemistry ambition city energy'),
@@ -9182,29 +9357,95 @@ function PrivateAttentionPanel({ signals = [], onDelete, onClear, language = vie
 }
 
 function extractProfileSignals(text) {
-  const clean = String(text ?? '').toLowerCase()
-  if (!clean.trim()) return []
-
-  const matchedSignals = signalRules.filter((signal) =>
-    signal.terms.some((term) => clean.includes(term)),
-  )
-  const keywordSignals = extractKeywords(clean)
-    .filter((keyword) => !matchedSignals.some((signal) => signalCoversKeyword(signal, keyword)))
-    .map((keyword) => ({
-      id: `keyword-${keyword}`,
-      label: titleCase(keyword),
-      kind: inferSignalKind(keyword),
-    }))
-
-  return uniqueSignals([...matchedSignals, ...keywordSignals]).slice(0, 12)
+  return extractAutomaticProfileTags(text, [], 72)
 }
 
-function signalCoversKeyword(signal, keyword) {
-  const cleanKeyword = String(keyword ?? '').toLowerCase()
-  return (
-    signal.label.toLowerCase().includes(cleanKeyword)
-    || signal.terms.some((term) => term.split(/\s+/).some((part) => part === cleanKeyword))
+function extractAutomaticProfileTags(text, existingNotes = [], limit = maxAutoTagsPerSave) {
+  const rawText = String(text ?? '').replace(/\s+/g, ' ').trim()
+  const clean = rawText.toLowerCase()
+  if (!clean) return []
+
+  const existingKeys = new Set(
+    normalizeMemoryNotes(existingNotes).map((note) =>
+      memorySlug(note.text.replace(/^You said:\s*/i, '').replace(/^AI tag:\s*/i, '')),
+    ),
   )
+  const byKey = new Map()
+
+  function addTag(label, kind = 'live', weight = 52, source = 'inferred') {
+    const cleanLabel = normalizeAutoTagLabel(label)
+    if (!cleanLabel) return
+    const key = memorySlug(cleanLabel)
+    if (!key || existingKeys.has(key)) return
+    const current = byKey.get(key)
+    const next = {
+      id: `${source}-${key}`.slice(0, 96),
+      label: cleanLabel,
+      kind,
+      weight,
+      source,
+    }
+    if (!current || next.weight > current.weight) byKey.set(key, next)
+  }
+
+  automaticTagRules.forEach((rule) => {
+    const hitCount = rule.terms.filter((term) => clean.includes(term.toLowerCase())).length
+    if (hitCount) addTag(rule.label, rule.kind, 72 + hitCount * 5, 'rule')
+  })
+
+  const ageMatch = clean.match(/\b(?:ik ben|i am|age|leeftijd)?\s*(1[89]|[2-7][0-9])\s*(?:jaar|years?|yo)?\b/)
+  if (ageMatch) addTag(`${ageMatch[1]} jaar`, 'identity', 74, 'age')
+
+  const professionMatch = rawText.match(/\b(?:ik ben|i am|werk als|work as|beroep|job|profession)\s+([^,.!?;:\n]{3,42})/i)
+  if (professionMatch) addTag(professionMatch[1], 'identity', 76, 'profession')
+
+  rawText
+    .split(/[.!?;\n]+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 12)
+    .slice(0, 36)
+    .forEach((sentence) => {
+      sentence
+        .split(/,|\ben\b|\band\b|\bmaar\b|\bbut\b|\bmet\b|\bwith\b/gi)
+        .map((part) => normalizeAutoTagLabel(part))
+        .filter((part) => part.length >= 4 && part.length <= 44)
+        .forEach((part) => addTag(part, inferSignalKind(part), 50, 'phrase'))
+    })
+
+  const tokens = clean
+    .replace(/[^a-zA-ZÀ-ÿ0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length > 3 && !autoTagStopWords.has(word))
+
+  tokens.forEach((word) => addTag(word, inferSignalKind(word), 44, 'keyword'))
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    addTag(`${tokens[index]} ${tokens[index + 1]}`, inferSignalKind(`${tokens[index]} ${tokens[index + 1]}`), 48, 'phrase')
+  }
+  for (let index = 0; index < tokens.length - 2; index += 1) {
+    addTag(`${tokens[index]} ${tokens[index + 1]} ${tokens[index + 2]}`, inferSignalKind(`${tokens[index]} ${tokens[index + 1]} ${tokens[index + 2]}`), 46, 'phrase')
+  }
+
+  return [...byKey.values()]
+    .sort((left, right) => right.weight - left.weight || left.label.localeCompare(right.label))
+    .slice(0, limit)
+}
+
+function normalizeAutoTagLabel(label) {
+  const clean = String(label ?? '')
+    .replace(/^ik ben\s+/i, '')
+    .replace(/^i am\s+/i, '')
+    .replace(/^werk als\s+/i, '')
+    .replace(/^work as\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[,.;:\s]+|[,.;:\s]+$/g, '')
+    .trim()
+  if (!clean) return ''
+  const words = clean.split(/\s+/).filter((word) => !autoTagStopWords.has(word.toLowerCase()))
+  if (!words.length) return ''
+  const clipped = words.join(' ').slice(0, 56).trim()
+  if (clipped.length < 3) return ''
+  return titleCase(clipped.toLowerCase())
 }
 
 function inferSignalKind(keyword) {

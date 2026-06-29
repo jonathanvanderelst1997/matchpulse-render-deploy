@@ -109,10 +109,17 @@ function memoryPayload(memory) {
   return { note: memory }
 }
 
-export function saveMemory(sessionId, text, visibility = 'match_ai') {
+export function saveMemory(sessionId, text, visibility = 'match_ai', source = 'ai-profile-tool') {
   return request('/api/memory', {
     method: 'POST',
-    body: withSession(sessionId, { text, visibility }),
+    body: withSession(sessionId, { text, visibility, source }),
+  })
+}
+
+export function saveMemories(sessionId, memories = []) {
+  return request('/api/memories', {
+    method: 'POST',
+    body: withSession(sessionId, { memories }),
   })
 }
 
