@@ -674,6 +674,10 @@ function matchFitsPreference(viewerProfile, match) {
   return interestAllows(matchInterest, viewerGender)
 }
 
+function resolveMatchPool(serverMatches = []) {
+  return Array.isArray(serverMatches) && serverMatches.length >= matches.length ? serverMatches : matches
+}
+
 function memorySlug(value) {
   return String(value)
     .trim()
@@ -2324,7 +2328,7 @@ function App() {
     setOnboardingPhotos(resolveOnboardingPhotos(state))
     setOrientation(profileInterest(state.profile))
     setIntent(state.profile.lookingFor)
-    setMatchPool(state.matches?.length ? state.matches : matches)
+    setMatchPool(resolveMatchPool(state.matches))
     setMemoryNotes(normalizeMemoryNotes(state.memoryNotes ?? []))
     setAttentionSignals(state.attentionSignals ?? [])
     setLinkedTools(state.linkedTools ?? initialLinkedTools)
@@ -2522,7 +2526,17 @@ function App() {
         match.distance,
         match.status,
         match.about,
+        match.bio,
+        match.character,
+        match.lifestyle,
+        match.datingGoals,
+        match.communicationStyle,
+        match.education,
         ...match.intent,
+        ...(match.hobbies ?? []),
+        ...(match.interests ?? []),
+        ...(match.values ?? []),
+        ...(match.favoriteActivities ?? []),
       ]
         .join(' ')
         .toLowerCase()
@@ -2547,6 +2561,42 @@ function App() {
       return defaultDiscoveryScore(b) - defaultDiscoveryScore(a)
     })
   }, [advancedFilters, hiddenMatches, matchPool, orientation, profileDraft, query, sortMode])
+
+  const radarVisibleMatches = useMemo(() => {
+    const cleanQuery = query.trim().toLowerCase()
+    const byQuery = matchPool.filter((match) => {
+      const searchable = [
+        match.name,
+        match.role,
+        match.city,
+        match.distance,
+        match.status,
+        match.about,
+        match.bio,
+        match.character,
+        match.lifestyle,
+        match.datingGoals,
+        match.communicationStyle,
+        match.education,
+        ...match.intent,
+        ...(match.hobbies ?? []),
+        ...(match.interests ?? []),
+        ...(match.values ?? []),
+        ...(match.favoriteActivities ?? []),
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return (
+        !isInternalSmokeProfile(match) &&
+        match.id !== profileDraft.id &&
+        !hiddenMatches.includes(match.id) &&
+        (!cleanQuery || searchable.includes(cleanQuery))
+      )
+    })
+
+    return [...byQuery].sort((a, b) => Number.parseFloat(a.distance) - Number.parseFloat(b.distance))
+  }, [hiddenMatches, matchPool, profileDraft.id, query])
 
   const selectedMatch =
     visibleMatches.find((match) => match.id === selectedMatchId) ??
@@ -2598,7 +2648,7 @@ function App() {
     try {
       const state = await saveAttentionSignal(sessionId, signal)
       setAttentionSignals(state.attentionSignals ?? [])
-      setMatchPool(state.matches?.length ? state.matches : matches)
+      setMatchPool(resolveMatchPool(state.matches))
     } catch (error) {
       setApiError(error.message)
     }
@@ -2669,7 +2719,7 @@ function App() {
     try {
       const state = await removeAttentionSignal(sessionId, signalId)
       setAttentionSignals(state.attentionSignals ?? [])
-      setMatchPool(state.matches?.length ? state.matches : matches)
+      setMatchPool(resolveMatchPool(state.matches))
     } catch (error) {
       showToast(error.message)
     }
@@ -2682,7 +2732,7 @@ function App() {
     try {
       const state = await clearAttentionSignalsOnServer(sessionId)
       setAttentionSignals(state.attentionSignals ?? [])
-      setMatchPool(state.matches?.length ? state.matches : matches)
+      setMatchPool(resolveMatchPool(state.matches))
     } catch (error) {
       showToast(error.message)
     }
@@ -3701,7 +3751,7 @@ function App() {
 
         {activeView === 'discover' ? (
           <DiscoverView
-            matches={visibleMatches}
+            matches={radarVisibleMatches}
             selectedMatch={selectedMatch}
             profile={profileDraft}
             openMatchProfile={openMatchProfile}
@@ -5677,24 +5727,9 @@ function MatchIntelligence({ match, openModal, language = viewer.language }) {
   )
 }
 
-const radarGalleryPool = [
-  '/portraits/marco.jpg',
-  '/portraits/ethan.jpg',
-  '/portraits/julian.jpg',
-  '/portraits/noah.jpg',
-  '/portraits/liam.jpg',
-  '/portraits/zara.jpg',
-  '/portraits/kai.jpg',
-  '/portraits/maya.jpg',
-  '/portraits/milan.jpg',
-]
-
 function getRadarPhotos(match) {
-  const start = Math.abs(
-    match.id.split('').reduce((total, letter) => total + letter.charCodeAt(0), 0),
-  ) % radarGalleryPool.length
-  const extras = [0, 3, 6].map((offset) => radarGalleryPool[(start + offset) % radarGalleryPool.length])
-  return [...new Set([match.photo, match.portrait, ...extras].filter(Boolean))].slice(0, 4)
+  const ownPhotos = Array.isArray(match.photos) && match.photos.length ? match.photos : [match.photo, match.portrait]
+  return [...new Set(ownPhotos.filter(Boolean))].slice(0, 5)
 }
 
 function getRadarTags(match) {
@@ -5731,7 +5766,7 @@ function DiscoverView({
     [filter.id]: matchList.filter((match, index) => filter.test(match, index)).length,
   }), {})
   const radarFilteredMatches = matchList.filter((match, index) => activeRadarFilter.test(match, index))
-  const radarMatches = radarFilteredMatches.slice(0, 24)
+  const radarMatches = radarFilteredMatches
   const isDutch = profile?.language === 'Nederlands'
   const radarCopy = isDutch
     ? {
