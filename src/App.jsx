@@ -3692,6 +3692,7 @@ function App() {
             advancedFilters={advancedFilters}
             activateDeepMatch={activateDeepMatch}
             favorites={favorites}
+            selectMatch={selectMatch}
             toggleFavorite={toggleFavorite}
             openModal={setModal}
             openMatchProfile={(matchId) => openMatchProfile(matchId, 'matches')}
@@ -4740,6 +4741,7 @@ function MatchesView({
   advancedFilters,
   activateDeepMatch,
   favorites,
+  selectMatch,
   toggleFavorite,
   openModal,
   openMatchProfile,
@@ -4776,6 +4778,19 @@ function MatchesView({
               onSelect={() => {
                 openMatchProfile(match.id)
               }}
+              onActivate={() => selectMatch(match.id)}
+              onMessage={() => {
+                selectMatch(match.id)
+                openModal({ type: 'intro' })
+              }}
+              onWhy={() => {
+                selectMatch(match.id)
+                openModal({ type: 'why' })
+              }}
+              onShare={() => {
+                selectMatch(match.id)
+                openModal({ type: 'shareDate' })
+              }}
               onFavorite={() => toggleFavorite(match.id)}
               language={language}
             />
@@ -4794,15 +4809,44 @@ function MatchesView({
   )
 }
 
-function MatchRow({ match, active, favorite, onSelect, onFavorite, language = viewer.language }) {
+function MatchRow({
+  match,
+  active,
+  favorite,
+  onSelect,
+  onActivate,
+  onMessage,
+  onWhy,
+  onShare,
+  onFavorite,
+  language = viewer.language,
+}) {
   const attractionDna = getAttractionDna(match)
   const lane = match.ranking?.lane ?? 'Deep fit'
   const isDutch = isDutchLanguage(language)
   const aiReason = match.ranking?.reason ?? match.shared?.[0] ?? match.about
+  const aiAnalysis = match.aiAnalysis ?? {}
+  const compatibility = match.compatibility ?? []
+  const sharedSignals = match.shared ?? []
+  const metricEntries = Object.entries(match.metrics ?? {}).filter(([label]) => label !== 'Uncertainty')
+  const analysisCards = [
+    {
+      label: isDutch ? 'Waarom geselecteerd' : 'Why selected',
+      value: aiAnalysis.whySelected ?? aiReason,
+    },
+    {
+      label: isDutch ? 'Langetermijnkans' : 'Long-term chance',
+      value: aiAnalysis.longTermChance ?? `${defaultDiscoveryScore(match)}% ${isDutch ? 'matchvertrouwen' : 'match confidence'}.`,
+    },
+    {
+      label: isDutch ? 'Aandachtspunt' : 'Attention point',
+      value: aiAnalysis.attentionPoint ?? (isDutch ? 'Check tempo en intentie tijdens het eerste gesprek.' : 'Check pace and intent during the first conversation.'),
+    },
+  ]
 
   return (
     <article className={active ? 'match-row active' : 'match-row'}>
-      <button className="match-row-main" type="button" onClick={onSelect}>
+      <button className="match-row-main" type="button" onClick={onActivate}>
         <Avatar image={match.portrait} online photoPrivacy={match.photoPrivacy} />
         <span className="row-copy">
           <strong>
@@ -4836,6 +4880,72 @@ function MatchRow({ match, active, favorite, onSelect, onFavorite, language = vi
         </span>
         <ChevronRight size={25} />
       </button>
+
+      <div className="match-row-actions" aria-label={isDutch ? `Acties voor ${match.name}` : `Actions for ${match.name}`}>
+        <button type="button" onClick={onMessage}>
+          <MessageSquare size={16} />
+          {isDutch ? 'Bericht' : 'Message'}
+        </button>
+        <button type="button" onClick={onSelect}>
+          <UserRound size={16} />
+          {isDutch ? 'Profiel' : 'Profile'}
+        </button>
+        <button type="button" onClick={onFavorite}>
+          <Heart size={16} fill={favorite ? 'currentColor' : 'none'} />
+          {favorite ? (isDutch ? 'Bewaard' : 'Saved') : (isDutch ? 'Opslaan' : 'Save')}
+        </button>
+        <button type="button" onClick={onShare}>
+          <Link2 size={16} />
+          {isDutch ? 'Delen' : 'Share'}
+        </button>
+      </div>
+
+      <div className="match-row-ai-panel">
+        <div className="match-ai-panel-head">
+          <span>
+            <Brain size={16} />
+            {isDutch ? 'AI-analyse' : 'AI analysis'}
+          </span>
+          <strong>{aiAnalysis.trustScore ?? defaultDiscoveryScore(match)}% {isDutch ? 'vertrouwen' : 'trust'}</strong>
+          <button type="button" onClick={onWhy}>{isDutch ? 'Waarom?' : 'Why?'}</button>
+        </div>
+
+        <div className="match-shared-pills">
+          <small>{isDutch ? 'Jullie delen' : 'You share'}</small>
+          {sharedSignals.slice(0, 4).map((signal) => (
+            <span key={signal}>{signal}</span>
+          ))}
+        </div>
+
+        <div className="match-ai-analysis-grid">
+          {analysisCards.map((card) => (
+            <span key={card.label}>
+              <small>{card.label}</small>
+              {card.value}
+            </span>
+          ))}
+        </div>
+
+        <div className="match-ai-metrics-mini">
+          {(compatibility.length ? compatibility : metricEntries.map(([label, score]) => ({ label, score, detail: lane }))).slice(0, 4).map((item) => (
+            <span key={item.label}>
+              <small>{item.label}</small>
+              <strong>{item.score}%</strong>
+              <em>{item.detail}</em>
+            </span>
+          ))}
+        </div>
+
+        {aiAnalysis.conversationStarters?.length ? (
+          <div className="match-conversation-starters">
+            <small>{isDutch ? 'Start hiermee' : 'Start with this'}</small>
+            {aiAnalysis.conversationStarters.slice(0, 3).map((starter) => (
+              <span key={starter}>{starter}</span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
       <button
         className={favorite ? 'favorite-button active' : 'favorite-button'}
         type="button"
