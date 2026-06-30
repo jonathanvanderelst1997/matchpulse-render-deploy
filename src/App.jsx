@@ -2563,7 +2563,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    if (typeof window === 'undefined' || sessionId) return undefined
+    if (typeof window === 'undefined') return undefined
 
     const params = new URLSearchParams(window.location.search)
     if (params.get('authCallback') !== '1') return undefined
@@ -2578,8 +2578,18 @@ function App() {
         setAuthProvider(auth.profile.provider ?? 'Supabase')
         setSessionId(auth.sessionId)
         safeSetLocalStorageItem('matchpulse-session', auth.sessionId)
-        setOnboardingDraft(auth.profile)
-        setOnboardingPhotos(resolveOnboardingPhotos(auth))
+        const stored = readStoredOnboardingDraft()
+        setOnboardingDraft({
+          ...auth.profile,
+          ...(stored?.profile ?? {}),
+          email: stored?.profile?.email || auth.profile.email,
+          contact: stored?.profile?.contact || auth.profile.contact,
+          emailVerified: true,
+        })
+        setOnboardingPhotos(normalizeOnboardingPhotos([
+          ...resolveOnboardingPhotos(auth),
+          ...(stored?.photos ?? []),
+        ]))
         setServerInviteLink(auth.inviteLink)
         window.history.replaceState({}, '', window.location.pathname)
 
@@ -2587,7 +2597,12 @@ function App() {
           applyAppState(await fetchAppState(auth.sessionId))
           setAuthStep('app')
         } else {
-          setAuthStep('pulse')
+          const storedStep = onboardingSteps.some((item) => item.id === stored?.step) && stored.step !== 'login'
+            ? stored.step
+            : 'profile'
+          setAuthModeWithReset('signup', { keepContact: true })
+          setAuthStep(storedStep)
+          setAuthUnlockedStep((current) => Math.max(current, onboardingStepIndex(storedStep)))
         }
 
         showToast('Secure login connected')
@@ -2605,7 +2620,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [applyAppState, inviteFrom, sessionId])
+  }, [applyAppState, inviteFrom])
 
   useEffect(() => {
     let cancelled = false

@@ -50,7 +50,17 @@ export async function startSupabaseOAuth(provider, inviteCode = '') {
 }
 
 export async function completeSupabaseOAuth() {
-  const { data, error } = await getSupabaseClient().auth.getSession()
+  const supabase = getSupabaseClient()
+  const params = new URLSearchParams(window.location.search)
+  const code = params.get('code')
+
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+    if (error) throw new Error(error.message)
+    return data.session?.access_token ?? ''
+  }
+
+  const { data, error } = await supabase.auth.getSession()
   if (error) throw new Error(error.message)
   return data.session?.access_token ?? ''
 }

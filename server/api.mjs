@@ -901,6 +901,15 @@ async function sendSignupVerificationEmail(db, user, contact, verificationUrl, o
   return delivery
 }
 
+async function fetchSupabaseAuthUserById(authUserId) {
+  if (!authUserId || !useSupabaseAuthEmail() || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null
+  try {
+    return await supabaseRequest(`/auth/v1/admin/users/${encodeURIComponent(authUserId)}`)
+  } catch {
+    return null
+  }
+}
+
 async function supabaseRequest(path, options = {}) {
   const response = await fetch(`${supabaseUrl()}${path}`, {
     method: options.method ?? 'GET',
@@ -2251,6 +2260,53 @@ function emailVerificationIsPending(user = {}) {
   )
 }
 
+function latestSupabaseAuthUserId(db, user = {}) {
+  return user.authUserId || [...(db.authEmails ?? [])]
+    .reverse()
+    .find((email) =>
+      email.userId === user.id &&
+      email.type === 'email_verification' &&
+      email.provider === 'supabase-auth' &&
+      email.providerMessageId,
+    )?.providerMessageId || ''
+}
+
+async function syncSupabaseEmailVerification(db, user = {}, contact = '') {
+  const verification = user.authSecret?.emailVerification
+  const contactInfo = normalizeContact(contact || user.profile?.email || user.profile?.contact)
+  if (!verification || verification.usedAt || !contactInfo.email || !useSupabaseAuthEmail()) return Boolean(verification?.usedAt)
+
+  const authUserId = latestSupabaseAuthUserId(db, user)
+  const authUser = await fetchSupabaseAuthUserById(authUserId)
+  const authEmail = normalizeContact(authUser?.email ?? '').email
+  const confirmedAt = authUser?.email_confirmed_at || authUser?.confirmed_at
+  if (!authEmail || authEmail !== contactInfo.email || !confirmedAt) return false
+
+  user.authUserId = authUser.id || authUserId
+  user.authSecret = {
+    ...(user.authSecret ?? {}),
+    emailVerification: {
+      ...verification,
+      usedAt: now(),
+      provider: 'supabase-auth',
+    },
+  }
+  user.profile = {
+    ...user.profile,
+    email: authEmail,
+    contact: authEmail,
+    emailVerified: true,
+  }
+  db.consentEvents.push({
+    id: randomUUID(),
+    userId: user.id,
+    type: 'email_verified_synced',
+    provider: 'supabase-auth',
+    createdAt: now(),
+  })
+  return true
+}
+
 function buildBetaOverview(db, request) {
   const activeUsers = db.users.filter((user) => !user.deletedAt)
   const onboardedUsers = activeUsers.filter((user) => user.onboarded)
@@ -2680,11 +2736,16 @@ async function routeCore(request, response) {
         const userContact = normalizeContact(contact)
         const verification = user.authSecret?.emailVerification
         if (isEmailVerificationRequired() && userContact.email && verification && !verification.usedAt) {
-          send(response, 403, {
-            error: verificationPendingError(language),
-            code: 'verification_pending',
-          })
-          return
+          const synced = await syncSupabaseEmailVerification(db, user, userContact.email)
+          if (synced) {
+            await saveDb(db)
+          } else {
+            send(response, 403, {
+              error: verificationPendingError(language),
+              code: 'verification_pending',
+            })
+            return
+          }
         }
 
         const passwordMatches = user.authSecret?.password
@@ -2737,6 +2798,9 @@ async function routeCore(request, response) {
           }
           const verificationUrl = `${getOrigin(request)}/?verifyToken=${encodeURIComponent(verificationToken)}&verifyContact=${encodeURIComponent(profileContact.email)}`
           const delivery = await sendSignupVerificationEmail(db, user, profileContact.email, verificationUrl, { password, request })
+          if (delivery.provider === 'supabase-auth' && delivery.id) {
+            user.authUserId = delivery.id
+          }
           db.consentEvents.push({
             id: randomUUID(),
             userId: user.id,
@@ -2987,6 +3051,12 @@ async function routeCore(request, response) {
           return
         }
         user = recovered.user
+      }
+      if (emailVerificationIsPending(user)) {
+        const synced = await syncSupabaseEmailVerification(db, user, body.profile?.email || user.profile?.email || user.profile?.contact)
+        if (synced) {
+          await saveDb(db)
+        }
       }
       if (emailVerificationIsPending(user)) {
         send(response, 403, {
