@@ -123,6 +123,16 @@ function resolveOnboardingPhotos(source = {}) {
   return normalizeOnboardingPhotos(list.length ? list : fallback)
 }
 
+function onboardingPhotoControlKey(photo = '') {
+  const text = String(photo ?? '')
+  let hash = 0
+  const step = Math.max(1, Math.floor(text.length / 80))
+  for (let index = 0; index < text.length; index += step) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 1000003
+  }
+  return `photo-${text.length}-${hash}`
+}
+
 function displayPhotoPrivacyDetail(option, language = viewer.language) {
   return photoPrivacyDetails[language]?.[option.id] ?? option.detail
 }
@@ -2492,13 +2502,45 @@ function App() {
 
     let cancelled = false
     verifyEmailToken(contact, token, onboardingDraft.language)
-      .then((payload) => {
+      .then(async (payload) => {
         if (cancelled) return
         setAuthContact(contact)
-        setAuthModeWithReset('login', { keepContact: true })
         setApiError('')
         setAuthPassword('')
         setAuthPasswordConfirm('')
+
+        if (payload?.sessionId) {
+          setSessionId(payload.sessionId)
+          safeSetLocalStorageItem('matchpulse-session', payload.sessionId)
+          setServerInviteLink(payload.inviteLink ?? '')
+          setOnboardingDraft((current) => ({
+            ...(payload.profile ?? {}),
+            ...current,
+            email: current.email || payload.profile?.email || contact,
+            contact: contact || current.contact,
+            language: current.language || payload.profile?.language || viewer.language,
+            photo: current.photo || payload.profile?.photo || viewer.photo,
+          }))
+          setOnboardingPhotos((current) => normalizeOnboardingPhotos([...current, ...resolveOnboardingPhotos(payload)]))
+
+          if (payload.onboarded) {
+            const state = await fetchAppState(payload.sessionId)
+            if (cancelled) return
+            applyAppState(state)
+            setAuthStep('app')
+          } else {
+            const stored = readStoredOnboardingDraft()
+            const storedStep = onboardingSteps.some((item) => item.id === stored?.step) && stored.step !== 'login'
+              ? stored.step
+              : 'profile'
+            setAuthModeWithReset('signup', { keepContact: true })
+            setAuthStep(storedStep)
+            setAuthUnlockedStep((current) => Math.max(current, onboardingStepIndex(storedStep)))
+          }
+        } else {
+          setAuthModeWithReset('login', { keepContact: true })
+        }
+
         showToast(payload.message ?? authText(onboardingDraft.language).login.verificationComplete)
       })
       .catch((error) => {
@@ -2517,7 +2559,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [emailVerificationParams.contact, emailVerificationParams.token, onboardingDraft.language])
+  }, [applyAppState, emailVerificationParams.contact, emailVerificationParams.token, onboardingDraft.language])
 
   useEffect(() => {
     let cancelled = false
@@ -4235,7 +4277,47 @@ function AuthExperience({
     [onboardingSignals, photos, profile],
   )
   const [draggingPhotoIndex, setDraggingPhotoIndex] = useState(null)
+  const [photoPositions, setPhotoPositions] = useState({})
+  const [photoZooms, setPhotoZooms] = useState({})
   const photoSlots = [...Array(ONBOARDING_PHOTO_LIMIT)].map((_, index) => photos[index] ?? '')
+
+  function photoPosition(photo) {
+    return photoPositions[onboardingPhotoControlKey(photo)] ?? { x: 50, y: 50 }
+  }
+
+  function photoZoom(photo) {
+    return photoZooms[onboardingPhotoControlKey(photo)] ?? 1
+  }
+
+  function photoStyle(photo) {
+    const position = photoPosition(photo)
+    const zoom = photoZoom(photo)
+    return {
+      objectPosition: `${position.x}% ${position.y}%`,
+      transform: `scale(${zoom})`,
+      transformOrigin: `${position.x}% ${position.y}%`,
+    }
+  }
+
+  function nudgePhoto(photo, xDelta, yDelta) {
+    const key = onboardingPhotoControlKey(photo)
+    setPhotoPositions((current) => {
+      const position = current[key] ?? { x: 50, y: 50 }
+      return {
+        ...current,
+        [key]: {
+          x: clamp(position.x + xDelta, 0, 100),
+          y: clamp(position.y + yDelta, 0, 100),
+        },
+      }
+    })
+  }
+
+  function updatePhotoZoom(photo, value) {
+    const key = onboardingPhotoControlKey(photo)
+    const nextZoom = clamp(Number.parseFloat(value) || 1, 1, 1.8)
+    setPhotoZooms((current) => ({ ...current, [key]: nextZoom }))
+  }
 
   function handlePhotoDragStart(index) {
     setDraggingPhotoIndex(index)
@@ -4739,7 +4821,7 @@ function AuthExperience({
                       onDrop={(event) => handlePhotoDrop(event, index)}
                       onDragEnd={handlePhotoDragEnd}
                     >
-                      <img src={photo} alt="" />
+                      <img src={photo} alt="" draggable="false" style={photoStyle(photo)} />
                       {index === 0 ? <strong className="auth-photo-primary-badge">{copy.photos.primary}</strong> : null}
                       <button
                         type="button"
@@ -4765,6 +4847,41 @@ function AuthExperience({
                       <span className="auth-photo-drag-handle" aria-hidden="true">
                         <MoreVertical size={14} />
                       </span>
+                      <div className="auth-photo-mobile-tools">
+                        <div className="auth-photo-order-controls">
+                          <button type="button" onClick={() => reorderPhoto(index, index - 1)} disabled={index <= 0}>
+                            {isDutchLanguage(profile.language) ? 'Eerder' : 'Earlier'}
+                          </button>
+                          <button type="button" onClick={() => reorderPhoto(index, index + 1)} disabled={index >= photos.length - 1}>
+                            {isDutchLanguage(profile.language) ? 'Later' : 'Later'}
+                          </button>
+                        </div>
+                        <div className="auth-photo-nudge-controls" aria-label={isDutchLanguage(profile.language) ? 'Foto positie' : 'Photo position'}>
+                          <button type="button" onClick={() => nudgePhoto(photo, 0, -8)}>
+                            {isDutchLanguage(profile.language) ? 'Omhoog' : 'Up'}
+                          </button>
+                          <button type="button" onClick={() => nudgePhoto(photo, 0, 8)}>
+                            {isDutchLanguage(profile.language) ? 'Omlaag' : 'Down'}
+                          </button>
+                          <button type="button" onClick={() => nudgePhoto(photo, -8, 0)}>
+                            {isDutchLanguage(profile.language) ? 'Links' : 'Left'}
+                          </button>
+                          <button type="button" onClick={() => nudgePhoto(photo, 8, 0)}>
+                            {isDutchLanguage(profile.language) ? 'Rechts' : 'Right'}
+                          </button>
+                        </div>
+                        <label className="auth-photo-zoom-control">
+                          <span>Zoom</span>
+                          <input
+                            type="range"
+                            min="1"
+                            max="1.8"
+                            step="0.05"
+                            value={photoZoom(photo)}
+                            onChange={(event) => updatePhotoZoom(photo, event.target.value)}
+                          />
+                        </label>
+                      </div>
                     </div>
                   )
                 })}

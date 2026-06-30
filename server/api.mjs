@@ -2505,9 +2505,30 @@ async function routeCore(request, response) {
       }
 
       if (verification.usedAt) {
-        send(response, 409, {
-          error: alreadyVerifiedMessage(language),
-          code: 'already_verified',
+        if (!verifyScryptSecret(verification, token)) {
+          send(response, 400, {
+            error: invalidVerificationTokenError(language),
+            code: 'invalid_verification_token',
+          })
+          return
+        }
+
+        const session = { id: randomUUID(), userId: user.id, provider: 'email-verification', createdAt: now() }
+        db.sessions.push(session)
+        ensureUserCollections(db, user.id)
+        db.consentEvents.push({
+          id: randomUUID(),
+          userId: user.id,
+          type: 'email_verified_session_resumed',
+          provider: useResendEmail() ? 'resend' : 'local-preview',
+          createdAt: now(),
+        })
+        await saveDb(db)
+        send(response, 200, {
+          ok: true,
+          message: alreadyVerifiedMessage(language),
+          emailProvider: useResendEmail() ? 'resend' : 'local-preview',
+          ...authStartPayload(db, user, session, request, { isReturningUser: true }),
         })
         return
       }
@@ -2531,6 +2552,9 @@ async function routeCore(request, response) {
         ...user.profile,
         emailVerified: true,
       }
+      const session = { id: randomUUID(), userId: user.id, provider: 'email-verification', createdAt: now() }
+      db.sessions.push(session)
+      ensureUserCollections(db, user.id)
       db.consentEvents.push({
         id: randomUUID(),
         userId: user.id,
@@ -2544,6 +2568,7 @@ async function routeCore(request, response) {
         ok: true,
         message: emailVerifiedMessage(language),
         emailProvider: useResendEmail() ? 'resend' : 'local-preview',
+        ...authStartPayload(db, user, session, request, { isReturningUser: true }),
       })
       return
     }

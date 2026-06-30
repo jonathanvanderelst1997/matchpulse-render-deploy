@@ -1043,6 +1043,7 @@ button {
 
 .auth-photo-slot:not(.auth-photo-slot-empty) {
   cursor: grab;
+  padding: 0;
 }
 
 .auth-photo-slot-empty {
@@ -1051,9 +1052,15 @@ button {
 }
 
 .auth-photo-slot img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: cover;
+  transition: transform 140ms ease, object-position 140ms ease;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .auth-photo-slot.active {
@@ -1069,21 +1076,24 @@ button {
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 6;
   width: 30px;
   height: 30px;
   display: grid;
   place-items: center;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  color: #3f4451;
+  background: rgba(34, 36, 43, 0.82);
+  color: #fff;
   cursor: pointer;
+  box-shadow: 0 10px 25px rgba(20, 22, 28, 0.18);
 }
 
 .auth-photo-primary-badge {
   position: absolute;
   right: 8px;
   bottom: 8px;
+  z-index: 5;
   max-width: calc(100% - 16px);
   overflow: hidden;
   border-radius: 999px;
@@ -1101,6 +1111,7 @@ button {
   position: absolute;
   left: 8px;
   bottom: 8px;
+  z-index: 5;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1126,6 +1137,7 @@ button {
   position: absolute;
   top: 10px;
   left: 10px;
+  z-index: 5;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1134,6 +1146,65 @@ button {
   border-radius: 50%;
   color: #616772;
   background: rgba(255, 255, 255, 0.88);
+}
+
+.auth-photo-mobile-tools {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 42px;
+  z-index: 5;
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.54);
+  border-radius: 16px;
+  padding: 7px;
+  background: rgba(31, 34, 42, 0.56);
+  color: #fff;
+  box-shadow: 0 16px 34px rgba(20, 22, 28, 0.2);
+  backdrop-filter: blur(16px);
+}
+
+.auth-photo-order-controls,
+.auth-photo-nudge-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.auth-photo-nudge-controls {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.auth-photo-order-controls button,
+.auth-photo-nudge-controls button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #313640;
+  font-size: 10px;
+  font-weight: 840;
+}
+
+.auth-photo-order-controls button:disabled {
+  opacity: 0.48;
+}
+
+.auth-photo-zoom-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.auth-photo-zoom-control input {
+  width: 100%;
+  accent-color: var(--coral);
 }
 
 .sample-photo-row {
@@ -9178,7 +9249,7 @@ button {
 }
 
 .profile-photo-position-controls {
-  display: none !important;
+  display: flex !important;
 }
 
 .search-preferences-panel {
