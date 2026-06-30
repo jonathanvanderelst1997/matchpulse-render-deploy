@@ -474,12 +474,13 @@ function profilesShareContact(left = {}, right = {}) {
   const rightEmail = String(right.email ?? '').trim().toLowerCase()
   const leftPhone = normalizeContact(left.phone).phone
   const rightPhone = normalizeContact(right.phone).phone
+  const bothHaveDifferentEmails = leftEmail && rightEmail && leftEmail !== rightEmail
 
   return Boolean(
     (leftEmail && rightEmail && leftEmail === rightEmail) ||
     (leftContact.email && rightContact.email && leftContact.email === rightContact.email) ||
-    (leftPhone && rightPhone && leftPhone === rightPhone) ||
-    (leftContact.phone && rightContact.phone && leftContact.phone === rightContact.phone),
+    (!bothHaveDifferentEmails && leftPhone && rightPhone && leftPhone === rightPhone) ||
+    (!bothHaveDifferentEmails && leftContact.phone && rightContact.phone && leftContact.phone === rightContact.phone),
   )
 }
 
@@ -554,6 +555,7 @@ function interestAllows(preference, genderIdentity) {
 function profilesCanMatch(currentProfile = {}, candidateProfile = {}) {
   const current = withDatingDefaults(currentProfile)
   const candidate = withDatingDefaults(candidateProfile)
+  if (current.genderIdentity === 'Not shown' || candidate.genderIdentity === 'Not shown') return true
   if (!interestAllows(current.interestedIn, candidate.genderIdentity)) return false
   if (current.genderIdentity === 'Not shown') {
     return candidate.interestedIn === 'Everyone' || candidate.interestedIn === 'Men & women'
@@ -1793,7 +1795,12 @@ function buildMatch(currentUser, candidateUser, db) {
     98,
   )
   const uncertainty = clamp(28 - overlap * 2 - intentBonus - attentionBonus - mutualAttractionBonus, 6, 31)
-  const distanceKm = seed?.distance ?? `${(hashNumber(profile.id, 8, 62) / 10).toFixed(1)} km away`
+  const sameCity = userProfile.city && profile.city && String(userProfile.city).trim().toLowerCase() === String(profile.city).trim().toLowerCase()
+  const distanceKm = seed?.distance ?? (
+    sameCity
+      ? `${(hashNumber(`${currentUser.id}-${candidateUser.id}-nearby`, 5, 24) / 10).toFixed(1)} km away`
+      : `${(hashNumber(profile.id, 8, 62) / 10).toFixed(1)} km away`
+  )
   const ranking = buildDiscoveryRanking({
     currentUser,
     profile,

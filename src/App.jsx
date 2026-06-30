@@ -5233,6 +5233,7 @@ function MatchRow({
           <em>
             {displayDistance(match.distance, language)}
             <b>{displayStatus(match.status, language)}</b>
+            <b>{defaultDiscoveryScore(match)}% Deep Match</b>
           </em>
           <span className="row-tags">
             {match.intent.slice(0, 3).map((tag) => (
