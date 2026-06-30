@@ -1148,7 +1148,7 @@ function getOrigin(request) {
 function getSessionUser(db, sessionId) {
   const session = db.sessions.find((item) => item.id === sessionId)
   if (!session) return null
-  return db.users.find((user) => user.id === session.userId) ?? null
+  return db.users.find((user) => user.id === session.userId && !user.deletedAt) ?? null
 }
 
 function latestSessionId(db, userId) {
