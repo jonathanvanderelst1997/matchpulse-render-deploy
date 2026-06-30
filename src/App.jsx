@@ -679,13 +679,23 @@ function matchFitsPreference(viewerProfile, match) {
   const matchGender = normalizeGenderIdentity(match?.genderIdentity)
   const matchInterest = profileInterest(match)
 
+  if (viewerGender === 'Not shown' || matchGender === 'Not shown') return true
   if (!interestAllows(viewerInterest, matchGender)) return false
-  if (viewerGender === 'Not shown') return matchInterest === 'Everyone' || matchInterest === 'Men & women'
   return interestAllows(matchInterest, viewerGender)
 }
 
 function resolveMatchPool(serverMatches = []) {
-  return Array.isArray(serverMatches) && serverMatches.length >= matches.length ? serverMatches : matches
+  return Array.isArray(serverMatches) ? serverMatches : matches
+}
+
+function realMatchPriority(match = {}) {
+  if (match.isRealUser === true) return 1
+  if (match.isSeed === true) return 0
+  return String(match.id ?? '').startsWith('seed-') ? 0 : 1
+}
+
+function compareRealMatchesFirst(a, b) {
+  return realMatchPriority(b) - realMatchPriority(a)
 }
 
 function memorySlug(value) {
@@ -2710,6 +2720,36 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [authStep, onboardingDraft, sessionId])
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || authStep !== 'app' || !sessionId) return undefined
+
+    let cancelled = false
+    const refreshMatches = () => {
+      fetchAppState(sessionId)
+        .then((state) => {
+          if (cancelled) return
+          setMatchPool(resolveMatchPool(state.matches))
+          setHiddenMatches(state.hiddenMatches ?? [])
+          setFavorites(state.favorites ?? [])
+          setMessages(state.messages ?? [])
+        })
+        .catch(() => {})
+    }
+    const refreshOnVisible = () => {
+      if (!document.hidden) refreshMatches()
+    }
+    const interval = window.setInterval(refreshMatches, 15000)
+    window.addEventListener('focus', refreshMatches)
+    document.addEventListener('visibilitychange', refreshOnVisible)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshMatches)
+      document.removeEventListener('visibilitychange', refreshOnVisible)
+    }
+  }, [authStep, sessionId])
+
   const visibleMatches = useMemo(() => {
     const cleanQuery = query.trim().toLowerCase()
     const activeFilters = filterOptions.filter((filter) => advancedFilters[filter.id])
@@ -2747,6 +2787,8 @@ function App() {
     })
 
     return [...byQuery].sort((a, b) => {
+      const realMatchSort = compareRealMatchesFirst(a, b)
+      if (realMatchSort) return realMatchSort
       if (sortMode === 'Closest nearby') {
         return Number.parseFloat(a.distance) - Number.parseFloat(b.distance)
       }
@@ -2790,7 +2832,11 @@ function App() {
       )
     })
 
-    return [...byQuery].sort((a, b) => Number.parseFloat(a.distance) - Number.parseFloat(b.distance))
+    return [...byQuery].sort((a, b) => (
+      compareRealMatchesFirst(a, b) ||
+      Number.parseFloat(a.distance) - Number.parseFloat(b.distance) ||
+      defaultDiscoveryScore(b) - defaultDiscoveryScore(a)
+    ))
   }, [hiddenMatches, matchPool, profileDraft.id, query])
 
   const selectedMatch =

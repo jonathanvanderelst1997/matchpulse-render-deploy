@@ -1823,6 +1823,8 @@ function buildMatch(currentUser, candidateUser, db) {
     score,
     discoveryScore: ranking.discoveryScore,
     ranking,
+    isSeed: Boolean(candidateUser.isSeed || candidateUser.provider === 'seed' || String(candidateUser.id ?? '').startsWith('seed-')),
+    isRealUser: !(candidateUser.isSeed || candidateUser.provider === 'seed' || String(candidateUser.id ?? '').startsWith('seed-')),
     photo: profile.photo,
     portrait: profile.portrait ?? profile.photo,
     genderIdentity: profile.genderIdentity,
@@ -2403,7 +2405,11 @@ function buildAppState(db, user, request) {
   )
   const matchList = visibleCandidates
     .map((candidate) => buildMatch(user, candidate, db))
-    .sort((a, b) => (b.discoveryScore ?? b.score) - (a.discoveryScore ?? a.score))
+    .sort((a, b) => (
+      Number(b.isRealUser) - Number(a.isRealUser) ||
+      parseDistanceKm(a.distance) - parseDistanceKm(b.distance) ||
+      (b.discoveryScore ?? b.score) - (a.discoveryScore ?? a.score)
+    ))
 
   return {
     sessionId: latestSessionId(db, user.id),
