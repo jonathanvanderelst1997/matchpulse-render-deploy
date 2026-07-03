@@ -888,6 +888,23 @@ function addProfilePreferenceTag(profile, tag, group = 'values') {
   }
 }
 
+function removeProfilePreferenceTag(profile, tag) {
+  const cleanTag = normalizeAutoTagLabel(tag)
+  if (!cleanTag) return profile
+  const preferences = {
+    values: [...(profile.preferences?.values ?? [])],
+    dealbreakers: [...(profile.preferences?.dealbreakers ?? [])],
+    visualTaste: [...(profile.preferences?.visualTaste ?? [])],
+    dateRhythm: [...(profile.preferences?.dateRhythm ?? [])],
+  }
+  Object.keys(preferences).forEach((group) => {
+    preferences[group] = preferences[group].filter(
+      (item) => !signalMatchesText(item, cleanTag) && !signalMatchesText(cleanTag, item),
+    )
+  })
+  return { ...profile, preferences }
+}
+
 function normalizeAttentionId(value) {
   return String(value)
     .trim()
@@ -5158,8 +5175,10 @@ function Rail({ activeView, setActiveView, profile, messageCount = 0 }) {
               onClick={() => setActiveView(item.id)}
               key={item.id}
             >
-              <Icon size={24} strokeWidth={1.9} />
-              {badgeCount ? <strong className="rail-badge">{Math.min(badgeCount, 99)}</strong> : null}
+              <b className="rail-icon-wrap">
+                <Icon size={24} strokeWidth={1.9} />
+                {badgeCount ? <strong className="rail-badge">{Math.min(badgeCount, 99)}</strong> : null}
+              </b>
               <span>{navLabel(item, language)}</span>
             </button>
           )
@@ -8906,6 +8925,16 @@ function ProfileToolView({
     setProfile((current) => addProfilePreferenceTag(current, tag, group))
   }
 
+  function setNeuralNodeProfileVisibility(node, isPublic) {
+    const group = neuralNodePreferenceGroup(node)
+    const tag = neuralNodeTagText(node)
+    setProfile((current) => (
+      isPublic
+        ? addProfilePreferenceTag(current, tag, group)
+        : removeProfilePreferenceTag(current, tag)
+    ))
+  }
+
   return (
     <section className="profile-tool-screen">
       <ScreenHeading
@@ -9027,18 +9056,6 @@ function ProfileToolView({
               <small>{toolCopy.aiToolHint}</small>
             </div>
           </div>
-          <NeuralMindMap
-            map={neuralMap}
-            profile={profile}
-            onRemoveSignal={removeSignalEverywhere}
-            onAddProfileTag={addNeuralNodeAsProfileTag}
-          />
-          <ProfileInsightControlPanel
-            signals={liveSignals}
-            profile={profile}
-            onRemoveSignal={removeSignalEverywhere}
-            onAddProfileTag={addNeuralNodeAsProfileTag}
-          />
           <form className="ai-input" onSubmit={submitAiMemory}>
             <textarea
               value={aiInput}
@@ -9060,6 +9077,13 @@ function ProfileToolView({
               </button>
             </div>
           </form>
+          <NeuralMindMap
+            map={neuralMap}
+            profile={profile}
+            insightSignals={liveSignals}
+            onRemoveSignal={removeSignalEverywhere}
+            onSetProfileTag={setNeuralNodeProfileVisibility}
+          />
         </section>
 
         <section className="preference-card">
@@ -9274,21 +9298,59 @@ function ProfileInsightControlPanel({ signals = [], profile, onRemoveSignal, onA
   )
 }
 
-function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {} }) {
+function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSetProfileTag = () => {} }) {
   const language = profile.language ?? viewer.language
   const isDutch = isDutchLanguage(language)
   const [nodeVisibility, setNodeVisibility] = useState({})
   const [profileTags, setProfileTags] = useState({})
+  const insightNodes = insightSignals.reduce((nodes, signal, index) => {
+    const value = signalLabel(signal, language)
+    const key = memorySlug(value)
+    if (!key || nodes.some((node) => node.key === key)) return nodes
+    return [
+      ...nodes,
+      {
+        key,
+        id: `insight-${signal.id || key}`,
+        label: profileInsightCategory(signal, language),
+        value,
+        kind: `signal signal-${signal.kind ?? 'live'}`,
+        x: 50,
+        y: 50,
+        size: 118,
+        active: index < 18,
+        sourceSignal: signal,
+      },
+    ]
+  }, [])
+  const displayNodes = [...insightNodes, ...map.nodes.filter((node) => !String(node.id).startsWith('signal-'))].reduce(
+    (nodes, node) => {
+      const key = memorySlug(`${node.label}-${node.value}`)
+      if (!key || nodes.some((item) => item.key === key)) return nodes
+      return [...nodes, { ...node, key }]
+    },
+    [],
+  )
 
-  function toggleNodeVisibility(node) {
-    const isPublic = nodeVisibility[node.id] === true || profileTags[node.id]
-    setNodeVisibility((current) => ({ ...current, [node.id]: !isPublic }))
-    if (!isPublic) addNodeAsProfileTag(node)
+  function setNodePublic(node, isPublic) {
+    setNodeVisibility((current) => ({ ...current, [node.id]: isPublic }))
+    setProfileTags((current) => {
+      const next = { ...current }
+      if (isPublic) next[node.id] = true
+      else delete next[node.id]
+      return next
+    })
+    onSetProfileTag(node, isPublic)
   }
 
-  function addNodeAsProfileTag(node) {
-    setProfileTags((current) => ({ ...current, [node.id]: true }))
-    onAddProfileTag(node)
+  function removeNode(node) {
+    const signal = node.sourceSignal ?? {
+      id: node.id,
+      label: node.value || node.label,
+      kind: node.kind,
+    }
+    setNodePublic(node, false)
+    onRemoveSignal(signal)
   }
 
   return (
@@ -9310,7 +9372,7 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
               <stop offset="100%" stopColor="#7ac6ab" stopOpacity="0.3" />
             </linearGradient>
           </defs>
-          {map.nodes.map((node) => (
+          {displayNodes.map((node) => (
             <path
               d={`M 50 50 C ${node.x} 50, 50 ${node.y}, ${node.x} ${node.y}`}
               key={`line-${node.id}`}
@@ -9326,7 +9388,7 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
         </div>
 
         <div className="neural-node-board">
-          {map.nodes.length ? map.nodes.map((node) => {
+          {displayNodes.length ? displayNodes.map((node) => {
             const isProfileTag = Boolean(profileTags[node.id])
             const profileVisible = nodeVisibility[node.id] === true || isProfileTag
             return (
@@ -9342,21 +9404,28 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
                   <button
                     className={profileVisible ? 'active' : ''}
                     type="button"
-                    onClick={() => toggleNodeVisibility(node)}
+                    onClick={() => setNodePublic(node, true)}
                     aria-pressed={profileVisible}
-                    aria-label={isDutch ? 'Zichtbaarheid wisselen' : 'Toggle visibility'}
                   >
                     <Eye size={13} />
-                    {profileVisible ? (isDutch ? 'Publiek' : 'Public') : (isDutch ? 'Alleen AI' : 'AI only')}
+                    {isDutch ? 'Publiek' : 'Public'}
                   </button>
                   <button
-                    className={isProfileTag ? 'active' : ''}
+                    className={!profileVisible ? 'active' : ''}
                     type="button"
-                    onClick={() => addNodeAsProfileTag(node)}
-                    aria-pressed={isProfileTag}
+                    onClick={() => setNodePublic(node, false)}
+                    aria-pressed={!profileVisible}
                   >
-                    <Plus size={13} />
-                    {isProfileTag ? (isDutch ? 'Profieltag' : 'Profile tag') : (isDutch ? 'Neem op' : 'Add tag')}
+                    <Brain size={13} />
+                    {isDutch ? 'Alleen AI' : 'AI only'}
+                  </button>
+                  <button
+                    className="neural-node-remove"
+                    type="button"
+                    onClick={() => removeNode(node)}
+                    aria-label={isDutch ? `Verwijder ${node.value}` : `Remove ${node.value}`}
+                  >
+                    <X size={13} />
                   </button>
                 </div>
               </article>
@@ -9373,15 +9442,6 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
             </article>
           )}
         </div>
-      </div>
-
-      <div className="neural-keywords">
-        {map.keywords.map((keyword) => (
-          <button type="button" onClick={() => onRemoveSignal(keyword)} key={keyword.id}>
-            <span>{signalLabel(keyword, language)}</span>
-            <X size={12} />
-          </button>
-        ))}
       </div>
     </section>
   )

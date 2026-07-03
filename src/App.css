@@ -1672,6 +1672,15 @@ button {
   transition: transform 160ms ease;
 }
 
+.rail-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  line-height: 1;
+}
+
 .rail-nav button:hover svg,
 .rail-nav button.active svg {
   transform: translateY(-1px);
@@ -1687,8 +1696,8 @@ button {
 
 .rail-badge {
   position: absolute;
-  top: 8px;
-  right: 10px;
+  top: -10px;
+  right: -13px;
   min-width: 20px;
   height: 20px;
   display: inline-flex;
@@ -8280,8 +8289,8 @@ button {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
 }
 
 .neural-node-board .neural-node,
@@ -8294,7 +8303,7 @@ button {
   display: grid;
   gap: 8px;
   align-content: start;
-  border-radius: 18px;
+  border-radius: 24px;
   padding: 14px;
   text-align: left;
   transform: none;
@@ -8337,13 +8346,13 @@ button {
 
 .neural-node.profile-hidden {
   border-style: dashed;
-  opacity: 0.72;
-  background: rgba(248, 249, 250, 0.74);
+  opacity: 1;
+  background: rgba(248, 249, 250, 0.82);
 }
 
 .neural-node-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
   gap: 6px;
   margin-top: 2px;
 }
@@ -8368,10 +8377,22 @@ button {
   background: rgba(92, 188, 142, 0.12);
 }
 
-.neural-node-actions button.active:last-child {
+.neural-node-actions button.active:nth-child(2) {
   color: var(--coral-strong);
   border-color: rgba(238, 102, 89, 0.24);
   background: rgba(238, 102, 89, 0.1);
+}
+
+.neural-node-actions .neural-node-remove {
+  width: 34px;
+  padding: 0;
+  color: #8e939d;
+}
+
+.neural-node-actions .neural-node-remove:hover {
+  color: #fff;
+  border-color: transparent;
+  background: var(--coral);
 }
 
 @media (max-width: 760px) {
