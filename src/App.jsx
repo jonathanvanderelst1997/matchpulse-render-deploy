@@ -3728,10 +3728,11 @@ function App() {
     setProfileDraft(nextProfile)
     setOnboardingDraft((current) => ({ ...current, ...nextProfile }))
     if (!sessionId) return
+    const nextInterest = profileInterest({ ...nextProfile, interestedIn: nextProfile.interestedIn ?? orientation })
     try {
       const state = await saveProfile(sessionId, {
         ...nextProfile,
-        interestedIn: orientation,
+        interestedIn: nextInterest,
         orientation: nextProfile.orientation,
         genderIdentity: normalizeGenderIdentity(nextProfile.genderIdentity),
         photoPrivacy: normalizePhotoPrivacy(nextProfile.photoPrivacy),
@@ -8947,9 +8948,20 @@ function ProfileToolView({
     [aiInput, attentionSignals, linkedTools, liveSignals, notes, orientation, profile, profileAttractionDna],
   )
 
-  function updateField(field, value) {
+  function updateField(field, value, options = {}) {
     if (field === 'bio') setDismissedProfileSignals([])
-    setProfile((current) => ({ ...current, [field]: value }))
+    const nextProfile = { ...profile, [field]: value }
+    setProfile(nextProfile)
+    if (options.persist) {
+      void persistProfileSnapshot(nextProfile)
+    }
+  }
+
+  function updateOrientationPreference(value) {
+    const nextProfile = { ...profile, interestedIn: value }
+    setOrientation(value)
+    setProfile(nextProfile)
+    void persistProfileSnapshot(nextProfile)
   }
 
   function fieldIsPublic(field) {
@@ -8958,17 +8970,17 @@ function ProfileToolView({
   }
 
   function toggleFieldVisibility(field) {
-    setProfile((current) => {
-      const currentValue = current.fieldVisibility?.[field] ?? fieldVisibilityDefaults[field] ?? 'private'
-      const nextValue = currentValue === 'public' ? 'private' : 'public'
-      return {
-        ...current,
-        fieldVisibility: {
-          ...(current.fieldVisibility ?? {}),
-          [field]: nextValue,
-        },
-      }
-    })
+    const currentValue = profile.fieldVisibility?.[field] ?? fieldVisibilityDefaults[field] ?? 'private'
+    const nextValue = currentValue === 'public' ? 'private' : 'public'
+    const nextProfile = {
+      ...profile,
+      fieldVisibility: {
+        ...(profile.fieldVisibility ?? {}),
+        [field]: nextValue,
+      },
+    }
+    setProfile(nextProfile)
+    void persistProfileSnapshot(nextProfile)
   }
 
   function renderFieldVisibilityToggle(field) {
@@ -9366,7 +9378,7 @@ function ProfileToolView({
               <span>{toolCopy.iAm}</span>
               <select
                 value={normalizeGenderIdentity(profile.genderIdentity)}
-                onChange={(event) => updateField('genderIdentity', event.target.value)}
+                onChange={(event) => updateField('genderIdentity', event.target.value, { persist: true })}
               >
                 {genderIdentityOptions.map((option) => (
                   <option value={option} key={option}>
@@ -9385,7 +9397,7 @@ function ProfileToolView({
                   value={orientation}
                   options={interestPreferences}
                   labels={Object.fromEntries(interestPreferences.map((option) => [option, displayOption(option, profile.language)]))}
-                  onChange={setOrientation}
+                  onChange={updateOrientationPreference}
                 />
               </div>
               {renderFieldVisibilityToggle('interestedIn')}
@@ -9397,15 +9409,16 @@ function ProfileToolView({
                   value={normalizePhotoPrivacy(profile.photoPrivacy)}
                   options={photoPrivacyOptions.map((option) => option.id)}
                   labels={Object.fromEntries(photoPrivacyOptions.map((option) => [option.id, displayOption(option.id, profile.language)]))}
-                  onChange={(value) => updateField('photoPrivacy', value)}
+                  onChange={(value) => updateField('photoPrivacy', value, { persist: true })}
                 />
               </div>
               {renderFieldVisibilityToggle('photoPrivacy')}
             </div>
           </div>
-          <button type="button" onClick={saveProfileChanges}>
-            {toolCopy.saveRecalculate}
-          </button>
+          <p className="privacy-autosave-note">
+            <ShieldCheck size={17} />
+            {isDutchProfile ? 'Elke wijziging wordt automatisch bewaard en herberekend.' : 'Every change autosaves and recalculates instantly.'}
+          </p>
         </section>
 
         <section className="tools-card">
