@@ -8964,6 +8964,12 @@ function ProfileToolView({
     void persistProfileSnapshot(nextProfile)
   }
 
+  function submitAiInputOnEnter(event) {
+    if (event.key !== 'Enter' || event.shiftKey) return
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
   function fieldIsPublic(field) {
     const value = profile.fieldVisibility?.[field] ?? fieldVisibilityDefaults[field] ?? 'private'
     return value === 'public'
@@ -9342,6 +9348,7 @@ function ProfileToolView({
             <textarea
               value={aiInput}
               onChange={(event) => updateAiInput(event.target.value)}
+              onKeyDown={submitAiInputOnEnter}
               placeholder={toolCopy.placeholder}
             />
             <div>
