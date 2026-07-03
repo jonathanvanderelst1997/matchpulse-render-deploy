@@ -561,7 +561,7 @@ const defaultPrivacySettings = {
   onlineStatus: true,
 }
 
-const defaultDiscoveryScore = (match) => match.discoveryScore ?? match.ranking?.discoveryScore ?? match.score ?? 0
+const defaultDiscoveryScore = (match) => match.score ?? match.discoveryScore ?? match.ranking?.discoveryScore ?? 0
 const freeMessageRequestLimit = 5
 const premiumMessageRequestLimit = 25
 

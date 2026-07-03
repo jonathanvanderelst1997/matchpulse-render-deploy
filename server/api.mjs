@@ -1840,45 +1840,38 @@ function parseDistanceKm(distance) {
   return Number.isFinite(value) ? value : 9
 }
 
-function buildDiscoveryRanking({ currentUser, profile, score, uncertainty, distance, attractionDna, overlap }) {
-  const distanceKm = parseDistanceKm(distance)
+function buildDiscoveryRanking({ currentUser, profile, score, uncertainty, attractionDna, overlap }) {
   const novelty = hashNumber(`${currentUser.id}-${profile.id}-discovery`, 0, 12)
-  const proximity = clamp(13 - Math.round(distanceKm * 1.7), 0, 13)
   const confidence = clamp(20 - uncertainty, 0, 14)
   const mutualPull = clamp(Math.round((attractionDna.mutual - 74) / 2), 0, 13)
   const exploration = clamp(novelty + (overlap < 5 ? 5 : 0) + (score >= 94 ? -3 : 2), 0, 14)
   const discoveryScore = clamp(
-    Math.round(score * 0.76 + attractionDna.mutual * 0.16 + proximity * 0.45 + confidence * 0.35 + exploration * 0.42),
+    Math.round(score * 0.82 + attractionDna.mutual * 0.12 + confidence * 0.36 + exploration * 0.32),
     58,
     99,
   )
   const lane =
     mutualPull >= 9
       ? 'Mutual pull'
-      : proximity >= 9
-        ? 'Nearby spark'
-        : exploration >= 9
-          ? 'Fresh angle'
-          : uncertainty <= 11
-            ? 'Low uncertainty'
-            : 'Deep fit'
+      : exploration >= 9
+        ? 'Fresh angle'
+        : uncertainty <= 11
+          ? 'Low uncertainty'
+          : 'Deep fit'
   const reason =
     lane === 'Fresh angle'
       ? 'Shown because it expands your pattern, not only because it has a high score.'
-      : lane === 'Nearby spark'
-        ? 'Boosted by proximity, shared signal and low friction to meet.'
-        : lane === 'Mutual pull'
-          ? 'Boosted because both sides look visually and energetically plausible.'
-          : lane === 'Low uncertainty'
-            ? 'Boosted because MatchPulse has enough signal to be more confident.'
-            : 'Ranked by compatibility, attraction DNA and current private memory.'
+      : lane === 'Mutual pull'
+        ? 'Boosted because both sides look visually and energetically plausible.'
+        : lane === 'Low uncertainty'
+          ? 'Boosted because MatchPulse has enough signal to be more confident.'
+          : 'Ranked by compatibility, attraction DNA and current private memory.'
 
   return {
     discoveryScore,
     lane,
     reason,
     novelty,
-    proximity,
     confidence,
     mutualPull,
   }
@@ -2019,7 +2012,6 @@ function buildMatch(currentUser, candidateUser, db) {
     seed?.intent?.includes(userProfile.lookingFor)
       ? 9
       : 2
-  const cityBonus = userProfile.city === profile.city ? 5 : 1
   const languageBonus = userProfile.language && profile.language && userProfile.language === profile.language ? 4 : 0
   const privacySettings = { ...defaultPrivacySettings, ...(db.privacySettings?.[currentUser.id] ?? {}) }
   const attentionBonus = privacySettings.attentionLearning
@@ -2028,11 +2020,19 @@ function buildMatch(currentUser, candidateUser, db) {
   const attractionDna = buildAttractionDna(currentUser, candidateUser, db)
   const mutualAttractionBonus = clamp(Math.round((attractionDna.mutual - 76) / 4), 0, 6)
   const baseScore = seed?.score ?? 72
+  const calibrationSpread = hashNumber(`${currentUser.id}-${candidateUser.id}-score-calibration`, -4, 4)
   const score = clamp(
     Math.round(
-      baseScore + overlap * 2.4 + intentBonus + cityBonus + languageBonus + attentionBonus + mutualAttractionBonus - 4,
+      baseScore * 0.58
+      + 31
+      + overlap * 1.85
+      + intentBonus * 0.72
+      + languageBonus * 0.5
+      + attentionBonus * 1.15
+      + mutualAttractionBonus * 1.6
+      + calibrationSpread,
     ),
-    58,
+    54,
     98,
   )
   const uncertainty = clamp(28 - overlap * 2 - intentBonus - attentionBonus - mutualAttractionBonus, 6, 31)
@@ -2087,7 +2087,7 @@ function buildMatch(currentUser, candidateUser, db) {
         55,
         96,
       ),
-      Lifestyle: clamp(score - 5 + cityBonus + Math.floor(attentionBonus / 2), 52, 95),
+      Lifestyle: clamp(score - 5 + Math.floor(attentionBonus / 2), 52, 95),
       Intent: clamp(score - 2 + intentBonus, 52, 97),
       Uncertainty: uncertainty,
     },
