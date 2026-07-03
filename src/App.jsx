@@ -3106,7 +3106,7 @@ function App() {
       `MatchPulse safety card for ${selectedMatch.name}`,
       `When: ${plan.time}`,
       `Where: ${plan.place}`,
-      `Match: ${selectedMatch.score}% Deep Match, ${selectedMatch.distance}`,
+      `Match: ${selectedMatch.score}% Deep Match`,
       plan.trustedContact ? `Trusted contact: ${plan.trustedContact}` : '',
       `Profile: ${selectedMatch.role}`,
     ]

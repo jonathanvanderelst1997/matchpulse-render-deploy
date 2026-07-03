@@ -1846,9 +1846,9 @@ function buildDiscoveryRanking({ currentUser, profile, score, uncertainty, attra
   const mutualPull = clamp(Math.round((attractionDna.mutual - 74) / 2), 0, 13)
   const exploration = clamp(novelty + (overlap < 5 ? 5 : 0) + (score >= 94 ? -3 : 2), 0, 14)
   const discoveryScore = clamp(
-    Math.round(score * 0.82 + attractionDna.mutual * 0.12 + confidence * 0.36 + exploration * 0.32),
-    58,
-    99,
+    Math.round(score * 0.78 + attractionDna.mutual * 0.1 + confidence * 0.32 + exploration * 0.28),
+    52,
+    96,
   )
   const lane =
     mutualPull >= 9
@@ -1860,12 +1860,12 @@ function buildDiscoveryRanking({ currentUser, profile, score, uncertainty, attra
           : 'Deep fit'
   const reason =
     lane === 'Fresh angle'
-      ? 'Shown because it expands your pattern, not only because it has a high score.'
+      ? 'Getoond omdat dit je patroon verruimt, niet omdat iemand toevallig dichtbij is.'
       : lane === 'Mutual pull'
-        ? 'Boosted because both sides look visually and energetically plausible.'
+        ? 'Sterker omdat jullie visuele en energetische signalen goed samen vallen.'
         : lane === 'Low uncertainty'
-          ? 'Boosted because MatchPulse has enough signal to be more confident.'
-          : 'Ranked by compatibility, attraction DNA and current private memory.'
+          ? 'Sterker omdat MatchPulse genoeg profiel- en geheugensignaal ziet.'
+          : 'Gerangschikt op compatibiliteit, aantrekkings-DNA en actuele private memory.'
 
   return {
     discoveryScore,
@@ -2020,20 +2020,22 @@ function buildMatch(currentUser, candidateUser, db) {
   const attractionDna = buildAttractionDna(currentUser, candidateUser, db)
   const mutualAttractionBonus = clamp(Math.round((attractionDna.mutual - 76) / 4), 0, 6)
   const baseScore = seed?.score ?? 72
-  const calibrationSpread = hashNumber(`${currentUser.id}-${candidateUser.id}-score-calibration`, -4, 4)
+  const seedSignal = clamp(baseScore - 74, -12, 14)
+  const overlapSignal = clamp(overlap, 0, 8)
+  const calibrationSpread = hashNumber(`${currentUser.id}-${candidateUser.id}-score-calibration`, -7, 7)
   const score = clamp(
     Math.round(
-      baseScore * 0.58
-      + 31
-      + overlap * 1.85
-      + intentBonus * 0.72
-      + languageBonus * 0.5
-      + attentionBonus * 1.15
-      + mutualAttractionBonus * 1.6
+      58
+      + seedSignal * 0.42
+      + overlapSignal * 1.25
+      + intentBonus * 0.45
+      + languageBonus * 0.25
+      + attentionBonus * 0.65
+      + mutualAttractionBonus * 0.95
       + calibrationSpread,
     ),
-    54,
-    98,
+    48,
+    96,
   )
   const uncertainty = clamp(28 - overlap * 2 - intentBonus - attentionBonus - mutualAttractionBonus, 6, 31)
   const sameCity = userProfile.city && profile.city && String(userProfile.city).trim().toLowerCase() === String(profile.city).trim().toLowerCase()
