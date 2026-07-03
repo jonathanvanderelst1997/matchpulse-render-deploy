@@ -589,12 +589,6 @@ function buildSharedMatchSignals(currentUser, candidateUser, db, context = {}) {
       : `Intent matches: you both seek ${String(profile.lookingFor).toLowerCase()}, so the first chat can be concrete about expectations.`)
   }
 
-  if (context.attentionBonus > 0) {
-    lines.push(isDutch
-      ? 'Privé-leermodel: jouw kijk-, foto- of chatgedrag verhoogt de matchscore; ruwe details blijven verborgen.'
-      : 'Private learning model: your view, photo or chat behavior lifts the score; raw details stay hidden.')
-  }
-
   if (userProfile.language && profile.language && userProfile.language === profile.language) {
     lines.push(isDutch
       ? `Gespreksbasis: jullie kunnen allebei in ${profile.language} praten.`
