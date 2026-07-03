@@ -416,11 +416,39 @@ function cleanProfileTagText(value = '') {
     .slice(0, 56)
 }
 
+function isUsefulServerProfileTag(value = '') {
+  const key = slugify(value)
+  if (!key || key.length < 3) return false
+  const firstWord = key.split('-')[0]
+  if (['als', 'die', 'de', 'het', 'een', 'en', 'maar', 'daarnaast', 'waarom', 'moet', 'kan'].includes(firstWord)) {
+    return false
+  }
+  return ![
+    'upload',
+    'uploads',
+    'kruisjes',
+    'kruis',
+    'screenshot',
+    'screenshots',
+    'session',
+    'expired',
+    'feedback',
+    'beta',
+    'foto-uploaden',
+    'foto-toevoegen',
+    'de-foto',
+    'for-uploaden',
+    'profieltool',
+    'tester-feedback',
+    'standaard',
+  ].some((blocked) => key.includes(blocked))
+}
+
 function uniqueProfileTags(tags = [], limit = 18) {
   const seen = new Set()
   return tags
     .map(cleanProfileTagText)
-    .filter(Boolean)
+    .filter(isUsefulServerProfileTag)
     .filter((tag) => {
       const key = slugify(tag)
       if (!key || seen.has(key)) return false
@@ -437,6 +465,7 @@ function publicProfileTagsForUser(db, user) {
     ...(preferences.values ?? []),
     ...(preferences.visualTaste ?? []),
     ...(preferences.dateRhythm ?? []),
+    ...(preferences.dealbreakers ?? []),
   ]
   const approvedMemoryTags = normalizeMemories(db?.memories?.[user?.id])
     .filter((memory) => ['profile', 'shareable'].includes(memory.visibility))
@@ -615,7 +644,7 @@ function buildSharedMatchSignals(currentUser, candidateUser, db, context = {}) {
       : 'AI confidence is high because multiple real tags, intent and behavior point in the same direction.')
   }
 
-  return uniqueSharedLines(lines, 5)
+  return uniqueSharedLines(lines, 8)
 }
 
 function hashNumber(value, min, max) {

@@ -5484,7 +5484,7 @@ function approvedProfileTagsForMatch(match = {}) {
       seen.add(key)
       return true
     })
-    .slice(0, 12)
+    .slice(0, 24)
 }
 
 function ApprovedProfileTags({ match, language = viewer.language }) {
@@ -5493,8 +5493,8 @@ function ApprovedProfileTags({ match, language = viewer.language }) {
   if (!tags.length) return null
 
   return (
-    <div className="approved-profile-tags" aria-label={isDutch ? 'Goedgekeurde profieltags' : 'Approved profile tags'}>
-      <small>{isDutch ? 'Goedgekeurde tags' : 'Approved tags'}</small>
+    <div className="approved-profile-tags" aria-label={isDutch ? 'Publieke profieltags' : 'Public profile tags'}>
+      <small>{isDutch ? 'Publieke tags' : 'Public tags'}</small>
       <div>
         {tags.map((tag) => (
           <span key={tag}>{tag}</span>
@@ -5556,7 +5556,7 @@ function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMat
       <details className="match-ai-details">
         <summary>
           <Brain size={18} />
-          {isDutch ? 'AI Insights' : 'AI Insights'}
+          {isDutch ? 'AI Match Analyse' : 'AI Match Analysis'}
           <span>{isDutch ? 'Compatibiliteit, DNA en uitleg' : 'Compatibility, DNA and reasoning'}</span>
         </summary>
         <MetricStrip metrics={match.metrics} language={language} />
@@ -6010,6 +6010,7 @@ function NearbyMap({ match, onOpen, isDutch = false }) {
 
 function SharedSignals({ match, language = viewer.language }) {
   const isDutch = isDutchLanguage(language)
+  const sharedTags = sharedSignalTagsForMatch(match, language, 24)
   return (
     <section className="shared-card">
       <div className="panel-title inline">
@@ -6017,8 +6018,15 @@ function SharedSignals({ match, language = viewer.language }) {
         <h2>{isDutch ? 'Wat jullie delen' : 'What you share'}</h2>
         <strong>{match.score}% signal</strong>
       </div>
+      {sharedTags.length ? (
+        <div className="shared-tag-cloud" aria-label={isDutch ? 'Gedeelde tags' : 'Shared tags'}>
+          {sharedTags.map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+      ) : null}
       <div className="shared-grid">
-        {match.shared.map((signal) => (
+        {(match.shared ?? []).map((signal) => (
           <p key={signal}>
             <i />
             {displayMatchText(signal, language)}
@@ -6253,6 +6261,7 @@ function DiscoverView({
   profile,
   openMatchProfile,
   openMatchMessages,
+  openModal,
   openPhotoRequest,
   recordPhotoAttention,
 }) {
@@ -6368,6 +6377,7 @@ function DiscoverView({
                 openProfile={openMatchProfile}
                 openMessage={openMessage}
                 requestPhoto={openPhotoRequest}
+                openSharedDetails={(targetMatch) => openModal?.({ type: 'sharedTags', match: targetMatch })}
                 isDutch={isDutch}
                 key={match.id}
               />
@@ -6393,7 +6403,116 @@ function DiscoverView({
   )
 }
 
-function RadarPersonCard({ match, active, photoIndex, setPhotoIndex, openProfile, openMessage, requestPhoto, isDutch = false }) {
+function sharedSignalTagsForMatch(match, language = viewer.language, limit = 12) {
+  const sourceLines = (match?.shared ?? []).flatMap((line) => sharedSignalLineToTags(line, language))
+  const fallbackTags = [
+    ...(match?.profileTags ?? []),
+    ...(match?.intent ?? []),
+  ]
+  const rawTags = sourceLines.length ? sourceLines : fallbackTags
+  const seen = new Set()
+  return rawTags
+    .map(normalizeSharedSignalTag)
+    .filter(isUsefulProfileSignalLabel)
+    .filter((tag) => {
+      const key = profileSignalMergeKey(tag)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, limit)
+}
+
+function sharedSignalLineToTags(line, language = viewer.language) {
+  let clean = displayMatchText(line, language)
+    .replace(/^Concrete overlap:\s*/i, '')
+    .replace(/^Publieke tag-overlap:\s*/i, '')
+    .replace(/^Public tag overlap:\s*/i, '')
+    .replace(/^Match-thema:\s*/i, '')
+    .replace(/^Match theme:\s*/i, '')
+    .replace(/^Gespreksbasis:\s*/i, 'Taal: ')
+    .replace(/^Conversation base:\s*/i, 'Language: ')
+    .replace(/^Intentie klopt:\s*/i, 'Intentie: ')
+    .replace(/^Intent matches:\s*/i, 'Intent: ')
+    .trim()
+
+  clean = clean
+    .replace(/^.*wijzen allebei naar\s+/i, '')
+    .replace(/^.*point toward\s+/i, '')
+    .replace(/\s+staat in jullie zichtbare profielsignalen.*$/i, '')
+    .replace(/\s+appears in both visible profile signals.*$/i, '')
+    .replace(/\s+komt in jullie beide profielsignalen terug.*$/i, '')
+    .replace(/\s+comes back in both of your profile signals.*$/i, '')
+    .replace(/\s+voor een zelfverzekerde intro.*$/i, '')
+    .replace(/\s+so the first chat.*$/i, '')
+    .replace(/\s+dust? de eerste chat.*$/i, '')
+    .replace(/[.]+$/g, '')
+    .trim()
+
+  if (clean.includes(':')) {
+    clean = clean.split(':').slice(1).join(':').trim()
+  }
+
+  return clean
+    .split(/\s*(?:,|\/|\+|&|\ben\b|\band\b)\s*/i)
+    .map(normalizeSharedSignalTag)
+    .filter(Boolean)
+}
+
+function normalizeSharedSignalTag(value = '') {
+  const clean = String(value)
+    .replace(/\bjullie\b/gi, '')
+    .replace(/\ballebei\b/gi, '')
+    .replace(/\bboth\b/gi, '')
+    .replace(/\byou\b/gi, '')
+    .replace(/\bprofile texts?\b/gi, '')
+    .replace(/\bprofielteksten\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[,.;:\s-]+|[,.;:\s-]+$/g, '')
+    .trim()
+  if (!clean || clean.length < 3 || clean.length > 42) return ''
+  return titleCase(clean.toLowerCase())
+    .replace(/\bAi\b/g, 'AI')
+    .replace(/\bDna\b/g, 'DNA')
+}
+
+function SharedSignalTagPreview({ match, isDutch = false, onOpen }) {
+  const language = isDutch ? 'Nederlands' : 'English'
+  const allTags = sharedSignalTagsForMatch(match, language, 48)
+  const visibleTags = allTags.slice(0, 5)
+  const hiddenCount = Math.max(0, allTags.length - visibleTags.length)
+
+  if (!visibleTags.length) {
+    return (
+      <div className="radar-shared-line">
+        <Brain size={14} />
+        <span>{isDutch ? 'Wat jullie delen' : 'What you share'}</span>
+        <strong>{match.shared?.[0] ?? match.about}</strong>
+      </div>
+    )
+  }
+
+  return (
+    <div className="radar-shared-line radar-shared-tags">
+      <span className="radar-shared-title">
+        <Brain size={14} />
+        {isDutch ? 'Wat jullie delen' : 'What you share'}
+      </span>
+      <div className="radar-shared-tag-list">
+        {visibleTags.map((tag) => (
+          <strong key={tag}>{tag}</strong>
+        ))}
+        {hiddenCount ? (
+          <button type="button" onClick={() => onOpen?.(match)}>
+            +{hiddenCount} {isDutch ? 'meer' : 'more'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function RadarPersonCard({ match, active, photoIndex, setPhotoIndex, openProfile, openMessage, requestPhoto, openSharedDetails, isDutch = false }) {
   const photos = getRadarPhotos(match)
   const safePhotoIndex = Math.min(Math.max(photoIndex, 0), Math.max(photos.length - 1, 0))
   const currentPhoto = photos[safePhotoIndex] ?? photos[0]
@@ -6464,11 +6583,7 @@ function RadarPersonCard({ match, active, photoIndex, setPhotoIndex, openProfile
         <small>{displayRole(match.role, isDutch ? 'Nederlands' : 'English')}</small>
       </div>
 
-      <p className="radar-shared-line">
-        <Brain size={14} />
-        <span>{isDutch ? 'Wat jullie delen' : 'What you share'}</span>
-        <strong>{match.shared?.[0] ?? match.about}</strong>
-      </p>
+      <SharedSignalTagPreview match={match} isDutch={isDutch} onOpen={openSharedDetails} />
 
       <div className="radar-tags">
         {tags.map((tag) => (
@@ -6865,7 +6980,7 @@ function MessagesView({
             <button
               className="conversation-avatar-button"
               type="button"
-              onClick={() => openModal({ type: 'photoAlbum' })}
+              onClick={() => openModal({ type: 'photoAlbum', match: selectedMatch })}
               aria-label={isDutch ? `Open fotoalbum van ${selectedMatch.name}` : `Open ${selectedMatch.name}'s photo album`}
             >
               <Avatar image={selectedMatch.portrait} online photoPrivacy={selectedMatch.photoPrivacy} />
@@ -6873,7 +6988,13 @@ function MessagesView({
             <span>
               <strong>{selectedMatch.name}</strong>
               <small>
-                {selectedMatch.role} · {selectedStatus === 'accepted'
+                {displayRole(selectedMatch.role, profile?.language ?? viewer.language)}
+                {' · '}
+                {displayDistance(selectedMatch.distance, profile?.language ?? viewer.language)}
+                {' · '}
+                {selectedMatch.score}% match
+                {' · '}
+                {selectedStatus === 'accepted'
                   ? messageCopy.openChat
                   : incomingRequest
                     ? messageCopy.requestLabel.toLowerCase()
@@ -6906,6 +7027,10 @@ function MessagesView({
                     {isDutch ? 'Date plannen' : messageCopy.planDate}
                   </button>
                 ) : null}
+                <button type="button" onClick={() => openModal({ type: 'mediaHub', match: selectedMatch })}>
+                  <Upload size={17} />
+                  {isDutch ? 'Media' : 'Media'}
+                </button>
                 <button type="button" onClick={() => openMatchProfile(selectedMatch.id)}>
                   <UserRound size={17} />
                   {isDutch ? 'Open profiel' : 'Open profile'}
@@ -6951,20 +7076,15 @@ function MessagesView({
           </div>
 
           <form className="message-compose" onSubmit={sendMessage}>
-            <label className={composeDisabled ? 'compose-photo disabled' : 'compose-photo'} aria-label={isDutch ? 'Foto sturen' : 'Send photo'}>
+            <button
+              className={composeDisabled ? 'compose-photo disabled' : 'compose-photo'}
+              type="button"
+              disabled={composeDisabled}
+              onClick={() => openModal({ type: 'mediaHub', match: selectedMatch })}
+              aria-label={isDutch ? 'Media sturen' : 'Send media'}
+            >
               <Upload size={18} />
-              <input
-                type="file"
-                accept="image/*"
-                disabled={composeDisabled}
-                onChange={(event) => {
-                  if (event.target.files?.length) {
-                    sendDirectMessage(isDutch ? 'Foto verstuurd' : 'Photo sent')
-                    event.target.value = ''
-                  }
-                }}
-              />
-            </label>
+            </button>
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -9294,10 +9414,15 @@ function profileSignalMergeKey(value = '') {
 function isUsefulProfileSignalLabel(value = '') {
   const key = memorySlug(value)
   if (!key || key.length < 3) return false
+  const firstWord = key.split('-')[0]
+  if (['als', 'die', 'de', 'het', 'een', 'en', 'maar', 'daarnaast', 'waarom', 'moet', 'kan'].includes(firstWord)) {
+    return false
+  }
   return ![
     'upload',
     'uploads',
     'kruisjes',
+    'kruis',
     'screenshot',
     'screenshots',
     'session',
@@ -9305,8 +9430,13 @@ function isUsefulProfileSignalLabel(value = '') {
     'feedback',
     'beta',
     'foto-uploaden',
+    'foto-toevoegen',
+    'de-foto',
     'for-uploaden',
     'profieltool',
+    'jonathan',
+    'tester-feedback',
+    'standaard',
   ].some((blocked) => key.includes(blocked))
 }
 
@@ -9396,6 +9526,7 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
     ...(profile.preferences?.values ?? []),
     ...(profile.preferences?.visualTaste ?? []),
     ...(profile.preferences?.dateRhythm ?? []),
+    ...(profile.preferences?.dealbreakers ?? []),
   ].map(profileSignalMergeKey))
   const insightNodes = insightSignals.reduce((nodes, signal, index) => {
     const value = signalLabel(signal, language)
@@ -9507,7 +9638,6 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
                 style={{ '--node-x': `${node.x}%`, '--node-y': `${node.y}%`, '--node-size': `${node.size}px` }}
                 key={node.id}
               >
-                <i />
                 <button
                   className="neural-card-remove"
                   type="button"
@@ -10039,6 +10169,124 @@ function includesAny(text, needles) {
   return needles.some((needle) => clean.includes(needle))
 }
 
+function SharedTagsModal({ match, language = viewer.language }) {
+  const isDutch = isDutchLanguage(language)
+  const tags = sharedSignalTagsForMatch(match, language, 80)
+
+  return (
+    <div className="shared-tags-modal">
+      <h2>{isDutch ? `Alles wat je deelt met ${match.name}` : `Everything you share with ${match.name}`}</h2>
+      <p>
+        {isDutch
+          ? 'Publieke tags worden zichtbaar vergeleken. Alleen-AI tags tellen onderliggend mee voor de score, maar worden niet publiek gemaakt.'
+          : 'Public tags are visibly compared. AI-only tags can still inform the score underneath, without becoming public.'}
+      </p>
+      <div className="shared-tags-cloud">
+        {tags.length ? tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        )) : (
+          <small>{isDutch ? 'Nog te weinig gedeelde signalen.' : 'Not enough shared signals yet.'}</small>
+        )}
+      </div>
+      <div className="shared-reason-list">
+        {(match.shared ?? []).map((signal) => (
+          <p key={signal}>
+            <i />
+            {displayMatchText(signal, language)}
+          </p>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MediaHubModal({ match, language = viewer.language, sendIntro }) {
+  const isDutch = isDutchLanguage(language)
+  const [activeTab, setActiveTab] = useState('pics')
+  const tabs = [
+    ['pics', isDutch ? 'Foto\'s' : 'Pics'],
+    ['videos', isDutch ? 'Video\'s' : 'Videos'],
+    ['albums', 'Albums'],
+    ['places', isDutch ? 'Locaties' : 'Places'],
+    ['favorites', isDutch ? 'Favorieten' : 'Favorites'],
+    ['recent', isDutch ? 'Recent' : 'Recent'],
+  ]
+  const photos = getRadarPhotos(match)
+  const visiblePhotos = activeTab === 'favorites' ? photos.slice(0, 2) : photos
+  const isPhotoTab = ['pics', 'favorites', 'recent'].includes(activeTab)
+
+  return (
+    <div className="media-hub-modal">
+      <h2>{isDutch ? 'Media kiezen' : 'Choose media'}</h2>
+      <p>
+        {isDutch
+          ? 'Gebruik bestaande foto\'s, albums of recente media. Uploaden blijft expliciet en herbruikbaar.'
+          : 'Reuse existing photos, albums, or recent media. Uploads stay explicit and reusable.'}
+      </p>
+      <div className="media-hub-tabs" role="tablist" aria-label={isDutch ? 'Media tabs' : 'Media tabs'}>
+        {tabs.map(([id, label]) => (
+          <button
+            className={activeTab === id ? 'active' : ''}
+            type="button"
+            onClick={() => setActiveTab(id)}
+            key={id}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {isPhotoTab ? (
+        <div className="media-hub-grid">
+          <label className="media-upload-tile">
+            <Upload size={22} />
+            <strong>{isDutch ? 'Nieuw uploaden' : 'Upload new'}</strong>
+            <small>{isDutch ? 'Wordt later herbruikbaar in je media.' : 'Will be reusable in your media.'}</small>
+            <input
+              type="file"
+              accept="image/*,video/*"
+              onChange={(event) => {
+                if (event.target.files?.length) {
+                  sendIntro?.(isDutch ? 'Media gedeeld' : 'Media shared')
+                  event.target.value = ''
+                }
+              }}
+            />
+          </label>
+          {visiblePhotos.map((photo, index) => (
+            <button
+              className="media-hub-item"
+              type="button"
+              onClick={() => sendIntro?.(isDutch ? `Foto gedeeld met ${match.name}` : `Photo shared with ${match.name}`)}
+              key={`${photo}-${index}`}
+            >
+              <img src={photo} alt="" />
+              <span>{isDutch ? 'Gebruik' : 'Use'}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="media-hub-empty">
+          <Sparkles size={20} />
+          <strong>
+            {activeTab === 'videos'
+              ? (isDutch ? 'Video\'s komen hier' : 'Videos will live here')
+              : activeTab === 'albums'
+                ? 'Albums'
+                : activeTab === 'places'
+                  ? (isDutch ? 'Locaties' : 'Places')
+                  : (isDutch ? 'Nog niets hier' : 'Nothing here yet')}
+          </strong>
+          <span>
+            {isDutch
+              ? 'De structuur staat klaar; echte cloud-bibliotheek kan hierop verder bouwen.'
+              : 'The structure is ready; the real cloud library can build on this.'}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ActionModal({
   modal,
   match,
@@ -10058,9 +10306,10 @@ function ActionModal({
   language = viewer.language,
 }) {
   const isDutch = language === 'Nederlands'
+  const modalMatch = modal.match ?? match
   const defaultIntro = isDutch
-    ? `Hey ${match.name}, je profiel trok mijn aandacht. Ik vond je energie rond ${displayRole(match.role, language).toLowerCase()} interessant en je lijkt bewust in connectie.`
-    : `Hey ${match.name}, your profile caught my attention. I liked the part about ${match.role.toLowerCase()} and the way you seem intentional about connection.`
+    ? `Hey ${modalMatch.name}, je profiel trok mijn aandacht. Ik vond je energie rond ${displayRole(modalMatch.role, language).toLowerCase()} interessant en je lijkt bewust in connectie.`
+    : `Hey ${modalMatch.name}, your profile caught my attention. I liked the part about ${modalMatch.role.toLowerCase()} and the way you seem intentional about connection.`
   const defaultPlace = isDutch ? 'Rustige wijnbar in de buurt' : 'Quiet wine bar near Ixelles'
   const defaultTime = isDutch ? 'Donderdag 20:30' : 'Thursday 20:30'
   const [intro, setIntro] = useState(modal.seed ?? defaultIntro)
@@ -10069,9 +10318,9 @@ function ActionModal({
   const [trustedContact, setTrustedContact] = useState('')
   const [reportReason, setReportReason] = useState(isDutch ? 'Ongepast of onveilig gedrag' : 'Inappropriate or unsafe behavior')
   const [reportNotes, setReportNotes] = useState('')
-  const albumPhotos = getRadarPhotos(match)
+  const albumPhotos = getRadarPhotos(modalMatch)
   const [albumIndex, setAlbumIndex] = useState(0)
-  const activeAlbumPhoto = albumPhotos[albumIndex] ?? match.portrait ?? match.photo
+  const activeAlbumPhoto = albumPhotos[albumIndex] ?? modalMatch.portrait ?? modalMatch.photo
 
   useEffect(() => {
     function closeOnEscape(event) {
@@ -10146,7 +10395,7 @@ function ActionModal({
 
         {modal.type === 'photoAlbum' ? (
           <div className="photo-album-modal">
-            <h2>{isDutch ? `Foto's van ${match.name}` : `${match.name}'s photos`}</h2>
+            <h2>{isDutch ? `Foto's van ${modalMatch.name}` : `${modalMatch.name}'s photos`}</h2>
             <div className="photo-album-stage">
               <img src={activeAlbumPhoto} alt="" />
               {albumPhotos.length > 1 ? (
@@ -10183,6 +10432,14 @@ function ActionModal({
               ))}
             </div>
           </div>
+        ) : null}
+
+        {modal.type === 'sharedTags' ? (
+          <SharedTagsModal match={modalMatch} language={language} />
+        ) : null}
+
+        {modal.type === 'mediaHub' ? (
+          <MediaHubModal match={modalMatch} language={language} sendIntro={sendIntro} />
         ) : null}
 
         {modal.type === 'shareDate' ? (
