@@ -551,6 +551,8 @@ function collectMatchSignalLabels(user, db, { includePrivate = true } = {}) {
     ...(preferences.visualTaste ?? []),
     ...(preferences.dateRhythm ?? []),
     ...(preferences.dealbreakers ?? []),
+    ...(preferences.publicTags ?? []),
+    ...(profile.publicTags ?? []),
   ]
   const memoryLabels = normalizeMemories(db?.memories?.[user?.id])
     .filter((memory) => includePrivate || ['profile', 'shareable'].includes(memory.visibility))
@@ -832,15 +834,26 @@ function profileFromMatch(match) {
       : match.intent.includes('Casual')
         ? 'Casual'
         : 'Serious',
-    bio: match.about,
+    bio: match.bio || match.about,
     about: match.about,
     profileCompletion: match.score,
     preferences: normalizePreferences({
+      publicTags: match.publicTags ?? [],
       preferences: {
-        values: match.shared.slice(0, 2),
-        dealbreakers: ['Low effort', 'Unclear intent'],
-        visualTaste: ['Natural confidence', 'Warm presence'],
-        dateRhythm: ['Coffee first', 'Walkable plans'],
+        values: [
+          ...(match.values ?? []),
+          ...(match.publicTags ?? []),
+        ],
+        dealbreakers: match.risks ?? [],
+        visualTaste: [
+          match.visualSignal,
+          ...(match.interests ?? []),
+        ],
+        dateRhythm: [
+          ...(match.favoriteActivities ?? []),
+          match.weekend,
+        ],
+        publicTags: match.publicTags ?? [],
       },
     }),
     seedMatch: match,
@@ -849,6 +862,10 @@ function profileFromMatch(match) {
     onboarded: true,
     createdAt: now(),
   })
+}
+
+function seedMemoriesForUser(user) {
+  return normalizeMemories(user?.profile?.seedMatch?.aiMemory ?? [])
 }
 
 function createSeedDatabase() {
@@ -866,7 +883,7 @@ function createSeedDatabase() {
     users: seedUsers,
     sessions: [],
     invites: [],
-    memories: Object.fromEntries(seedUsers.map((user) => [user.id, normalizeMemories(viewer.aiMemory)])),
+    memories: Object.fromEntries(seedUsers.map((user) => [user.id, seedMemoriesForUser(user)])),
     linkedTools: Object.fromEntries(seedUsers.map((user) => [user.id, defaultLinkedTools])),
     privacySettings: Object.fromEntries(seedUsers.map((user) => [user.id, defaultPrivacySettings])),
     attentionSignals: {},
@@ -935,6 +952,11 @@ function ensureDatabaseShape(db) {
       return { ...user, profile: currentSeedProfiles.get(user.id) }
     }
     return { ...user, profile: withDatingDefaults(user.profile) }
+  })
+  db.users.forEach((user) => {
+    if (user.isSeed) {
+      db.memories[user.id] = seedMemoriesForUser(user)
+    }
   })
   return db
 }
@@ -1639,6 +1661,8 @@ function tokenSet(profile, extraText = '') {
     ...(profile.preferences?.values ?? []),
     ...(profile.preferences?.visualTaste ?? []),
     ...(profile.preferences?.dateRhythm ?? []),
+    ...(profile.preferences?.publicTags ?? []),
+    ...(profile.publicTags ?? []),
     extraText,
   ]
     .join(' ')
@@ -1661,6 +1685,26 @@ function overlapScore(a, b, leftExtra = '', rightExtra = '') {
     if (right.has(word)) overlap += 1
   })
   return overlap
+}
+
+function profileSignalDepth(profile = {}, memoryText = '') {
+  const preferences = profile.preferences ?? {}
+  const preferenceCount = [
+    ...(preferences.values ?? []),
+    ...(preferences.visualTaste ?? []),
+    ...(preferences.dateRhythm ?? []),
+    ...(preferences.dealbreakers ?? []),
+    ...(preferences.publicTags ?? []),
+    ...(profile.publicTags ?? []),
+  ].filter(Boolean).length
+  const words = tokenSet(profile, memoryText).size
+  const narrativeBonus = String(profile.bio || profile.about || '').trim().length >= 160 ? 2 : 0
+
+  return clamp(
+    Math.floor(words / 10) + Math.floor(preferenceCount / 4) + narrativeBonus,
+    0,
+    10,
+  )
 }
 
 function includesAnyText(text, needles) {
@@ -1731,6 +1775,8 @@ function profileSignalText(profile, extraText = '') {
     ...(profile.preferences?.values ?? []),
     ...(profile.preferences?.visualTaste ?? []),
     ...(profile.preferences?.dateRhythm ?? []),
+    ...(profile.preferences?.publicTags ?? []),
+    ...(profile.publicTags ?? []),
     extraText,
   ].join(' ')
 }
@@ -2017,11 +2063,13 @@ function buildMatch(currentUser, candidateUser, db) {
   const userProfile = withDatingDefaults(currentUser.profile)
   const profile = withDatingDefaults(candidateUser.profile)
   const seed = profile.seedMatch
+  const currentMemoryText = matchingMemoryText(db, currentUser.id)
+  const candidateMemoryText = matchingMemoryText(db, candidateUser.id)
   const overlap = overlapScore(
     userProfile,
     profile,
-    matchingMemoryText(db, currentUser.id),
-    matchingMemoryText(db, candidateUser.id),
+    currentMemoryText,
+    candidateMemoryText,
   )
   const intentBonus =
     userProfile.lookingFor === profile.lookingFor ||
@@ -2035,25 +2083,32 @@ function buildMatch(currentUser, candidateUser, db) {
     : 0
   const attractionDna = buildAttractionDna(currentUser, candidateUser, db)
   const mutualAttractionBonus = clamp(Math.round((attractionDna.mutual - 76) / 4), 0, 6)
-  const baseScore = seed?.score ?? 72
-  const seedSignal = clamp(baseScore - 74, -12, 14)
-  const overlapSignal = clamp(overlap, 0, 8)
-  const calibrationSpread = hashNumber(`${currentUser.id}-${candidateUser.id}-score-calibration`, -7, 7)
+  const overlapSignal = clamp(overlap, 0, 12)
+  const currentDepth = profileSignalDepth(userProfile, currentMemoryText)
+  const candidateDepth = profileSignalDepth(profile, candidateMemoryText)
+  const signalDepthBonus = clamp(Math.round((currentDepth + candidateDepth) / 2), 0, 10)
+  const publicOverlapBonus = sharedExactLabels(
+    collectMatchSignalLabels(currentUser, db, { includePrivate: false }),
+    collectMatchSignalLabels(candidateUser, db, { includePrivate: false }),
+    6,
+  ).length
+  const calibrationSpread = hashNumber(`${currentUser.id}-${candidateUser.id}-score-calibration`, -4, 4)
   const score = clamp(
     Math.round(
-      58
-      + seedSignal * 0.42
-      + overlapSignal * 1.25
-      + intentBonus * 0.45
-      + languageBonus * 0.25
-      + attentionBonus * 0.65
-      + mutualAttractionBonus * 0.95
+      60
+      + overlapSignal * 1.55
+      + intentBonus * 0.55
+      + languageBonus * 0.35
+      + attentionBonus * 0.7
+      + mutualAttractionBonus * 1.1
+      + signalDepthBonus * 0.85
+      + publicOverlapBonus * 1.15
       + calibrationSpread,
     ),
     48,
     96,
   )
-  const uncertainty = clamp(28 - overlap * 2 - intentBonus - attentionBonus - mutualAttractionBonus, 6, 31)
+  const uncertainty = clamp(30 - overlap * 2 - intentBonus - attentionBonus - mutualAttractionBonus - signalDepthBonus, 6, 31)
   const sameCity = userProfile.city && profile.city && String(userProfile.city).trim().toLowerCase() === String(profile.city).trim().toLowerCase()
   const distanceKm = seed?.distance ?? (
     sameCity
@@ -2097,8 +2152,8 @@ function buildMatch(currentUser, candidateUser, db) {
     attractionDna,
     about: profile.bio || profile.about || 'Still teaching MatchPulse their profile.',
     profileTags: publicProfileTagsForUser(db, candidateUser),
-    shared: seed?.shared ?? sharedSignals,
-    metrics: seed?.metrics ?? {
+    shared: sharedSignals.length ? sharedSignals : (seed?.shared ?? []),
+    metrics: {
       Values: clamp(score + 2, 55, 98),
       Attraction: clamp(
         Math.round((score - 3 + hashNumber(profile.id, 0, 7) + attentionBonus + attractionDna.mutual) / 2),
