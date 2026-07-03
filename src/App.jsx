@@ -8805,6 +8805,15 @@ function ProfileToolView({
     })
   }
 
+  function removeNeuralSignal(signal) {
+    removeSignalEverywhere(signal)
+    const label = signalLabel(signal, profile.language)
+    normalizeMemoryNotes(notes)
+      .filter((note) => /^AI tag:/i.test(note.text) && signalMatchesText(note.text, label))
+      .slice(0, 4)
+      .forEach((note) => deleteMemoryNote(note))
+  }
+
   function pickProfilePhoto(photo) {
     setProfile((current) => ({ ...current, photo }))
   }
@@ -9081,7 +9090,7 @@ function ProfileToolView({
             map={neuralMap}
             profile={profile}
             insightSignals={liveSignals}
-            onRemoveSignal={removeSignalEverywhere}
+            onRemoveSignal={removeNeuralSignal}
             onSetProfileTag={setNeuralNodeProfileVisibility}
           />
         </section>
