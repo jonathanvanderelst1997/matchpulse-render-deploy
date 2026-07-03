@@ -9922,6 +9922,151 @@ button {
   }
 }
 
+/* Public beta polish: chat headers should feel compact, not like a cropped hero image. */
+.messages-layout.chat-open {
+  grid-template-columns: minmax(280px, 370px) minmax(0, 1fr);
+}
+
+.conversation-card {
+  min-width: 0;
+}
+
+.conversation-head {
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  margin: -22px -22px 18px;
+}
+
+.conversation-head .chat-back-button {
+  display: none;
+}
+
+.conversation-head .conversation-avatar-button {
+  width: 58px;
+  min-width: 58px;
+  max-width: 58px;
+  height: 58px;
+  min-height: 58px;
+  max-height: 58px;
+  grid-column: 1;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+.conversation-head .conversation-avatar-button .avatar,
+.conversation-head .conversation-avatar-button .avatar img,
+.conversation-head .conversation-avatar-button .avatar-private {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.conversation-head .conversation-avatar-button .avatar img {
+  object-fit: cover;
+}
+
+.conversation-head > span {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.conversation-head > span strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: clamp(1.05rem, 1vw, 1.22rem);
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-head > span small {
+  overflow: hidden;
+  margin-top: 5px;
+  color: #777d89;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  justify-content: stretch;
+}
+
+.conversation-actions button {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.message-list {
+  padding-top: 8px;
+}
+
+@media (max-width: 980px) {
+  .messages-layout.chat-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .messages-layout.chat-open .conversation-list {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .conversation-head {
+    grid-template-columns: 44px 54px minmax(0, 1fr);
+    margin: -18px -18px 16px;
+    padding: 14px;
+  }
+
+  .conversation-head .chat-back-button {
+    display: inline-grid;
+    grid-column: 1;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .conversation-head .conversation-avatar-button {
+    grid-column: 2;
+    width: 54px;
+    min-width: 54px;
+    max-width: 54px;
+    height: 54px;
+    min-height: 54px;
+    max-height: 54px;
+  }
+
+  .conversation-head > span {
+    grid-column: 3;
+  }
+
+  .conversation-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .conversation-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-head > span small {
+    white-space: normal;
+  }
+}
+
 /* Beta desktop premium pass: keep mobile navigation from swallowing desktop content. */
 @media (min-width: 900px) {
   .app-shell,
