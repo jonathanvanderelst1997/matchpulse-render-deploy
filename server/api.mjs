@@ -1186,7 +1186,7 @@ function latestSessionId(db, userId) {
 }
 
 function ensureUserCollections(db, userId) {
-  db.memories[userId] = normalizeMemories(db.memories[userId] ?? viewer.aiMemory)
+  db.memories[userId] = normalizeMemories(db.memories[userId] ?? [])
   db.linkedTools[userId] ??= defaultLinkedTools.map((tool) => ({ ...tool }))
   db.privacySettings[userId] ??= { ...defaultPrivacySettings }
   db.attentionSignals[userId] = normalizeAttentionSignals(db.attentionSignals[userId])
