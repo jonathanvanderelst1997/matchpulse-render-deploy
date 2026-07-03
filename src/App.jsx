@@ -623,6 +623,16 @@ function messageRequestUsage(messages = [], profile = {}) {
   }
 }
 
+function messageNotificationCount(messages = []) {
+  const unreadThreads = new Set()
+  messages.forEach((message) => {
+    if (message.from !== 'them') return
+    if (!['accepted', 'request'].includes(normalizeMessageStatus(message))) return
+    unreadThreads.add(message.matchId)
+  })
+  return unreadThreads.size
+}
+
 function normalizeGenderIdentity(value) {
   return genderIdentityOptions.includes(value) ? value : 'Not shown'
 }
@@ -861,10 +871,10 @@ function addProfilePreferenceTag(profile, tag, group = 'values') {
   const cleanTag = normalizeAutoTagLabel(tag)
   if (!cleanTag) return profile
   const preferences = {
-    values: [...(profile.preferences?.values?.length ? profile.preferences.values : viewer.preferences.values)],
-    dealbreakers: [...(profile.preferences?.dealbreakers?.length ? profile.preferences.dealbreakers : viewer.preferences.dealbreakers)],
-    visualTaste: [...(profile.preferences?.visualTaste?.length ? profile.preferences.visualTaste : viewer.preferences.visualTaste)],
-    dateRhythm: [...(profile.preferences?.dateRhythm?.length ? profile.preferences.dateRhythm : viewer.preferences.dateRhythm)],
+    values: [...(profile.preferences?.values ?? [])],
+    dealbreakers: [...(profile.preferences?.dealbreakers ?? [])],
+    visualTaste: [...(profile.preferences?.visualTaste ?? [])],
+    dateRhythm: [...(profile.preferences?.dateRhythm ?? [])],
   }
   const targetGroup = preferences[group] ? group : 'values'
   const exists = preferences[targetGroup].some((item) => signalMatchesText(item, cleanTag) || signalMatchesText(cleanTag, item))
@@ -2844,6 +2854,7 @@ function App() {
     visibleMatches[0] ??
     matchPool.find((match) => !hiddenMatches.includes(match.id) && !isInternalSmokeProfile(match)) ??
     matches[0]
+  const messageBadgeCount = useMemo(() => messageNotificationCount(messages), [messages])
 
   const floatingFeedbackSurfaceContext = useMemo(
     () => floatingSurfaceContext(activeView, profileDraft.language, selectedMatch),
@@ -3701,18 +3712,52 @@ function App() {
       return
     }
     try {
-      applyAppState(await saveProfile(sessionId, {
+      const existingNotes = normalizeMemoryNotes(memoryNotes)
+      const profileSignalCorpus = [
+        profileDraft.bio,
+        profileDraft.about,
+        profileDraft.role,
+        profileDraft.lookingFor,
+      ].filter(Boolean).join('\n')
+      const autoTagMemories = extractAutomaticProfileTags(profileSignalCorpus, existingNotes)
+        .slice(0, maxAutoTagsPerSave)
+        .map((signal) => createAutoTagMemory(signal, profileSignalCorpus))
+
+      if (autoTagMemories.length) {
+        setMemoryNotes((current) => {
+          const merged = [...autoTagMemories, ...normalizeMemoryNotes(current)]
+          const seen = new Set()
+          return merged.filter((note) => {
+            const key = memorySlug(note.text.replace(/^You said:\s*/i, '').replace(/^AI tag:\s*/i, ''))
+            if (!key || seen.has(key)) return false
+            seen.add(key)
+            return true
+          }).slice(0, maxLocalMemoryNotes)
+        })
+      }
+
+      let nextState = await saveProfile(sessionId, {
         ...profileDraft,
         interestedIn: orientation,
         orientation: profileDraft.orientation,
         genderIdentity: normalizeGenderIdentity(profileDraft.genderIdentity),
         photoPrivacy: normalizePhotoPrivacy(profileDraft.photoPrivacy),
         lookingFor: intent,
-      }))
+      })
+
+      if (autoTagMemories.length) {
+        nextState = await saveMemories(sessionId, autoTagMemories.map((tagMemory) => ({
+          text: tagMemory.text,
+          visibility: tagMemory.visibility,
+          source: tagMemory.source,
+        })))
+      }
+
+      applyAppState(nextState)
       setActiveView('discover')
       showToast(profileDraft.language === 'Nederlands'
-        ? 'Profiel bewaard en matches herberekend'
-        : 'Profile saved and matches recalculated')
+        ? `Profiel bewaard en matches herberekend${autoTagMemories.length ? ` · ${autoTagMemories.length} AI-tags geleerd` : ''}`
+        : `Profile saved and matches recalculated${autoTagMemories.length ? ` · learned ${autoTagMemories.length} AI tags` : ''}`)
     } catch (error) {
       showToast(error.message)
     }
@@ -4019,7 +4064,12 @@ function App() {
 
   return (
     <main className="mp-window">
-      <Rail activeView={activeView} setActiveView={navigateToView} profile={profileDraft} />
+      <Rail
+        activeView={activeView}
+        setActiveView={navigateToView}
+        profile={profileDraft}
+        messageCount={messageBadgeCount}
+      />
       <section className="mp-product">
         <Topbar
           query={query}
@@ -5082,7 +5132,7 @@ function AuthPulseVisual({ step, profile, photos, copy = authText(viewer.languag
   )
 }
 
-function Rail({ activeView, setActiveView, profile }) {
+function Rail({ activeView, setActiveView, profile, messageCount = 0 }) {
   const language = profile?.language ?? viewer.language
   return (
     <aside className="rail">
@@ -5098,6 +5148,7 @@ function Rail({ activeView, setActiveView, profile }) {
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = activeView === item.id || (activeView === 'matchProfile' && item.id === 'discover')
+          const badgeCount = item.id === 'messages' ? messageCount : 0
           return (
             <button
               className={isActive ? 'active' : ''}
@@ -5108,6 +5159,7 @@ function Rail({ activeView, setActiveView, profile }) {
               key={item.id}
             >
               <Icon size={24} strokeWidth={1.9} />
+              {badgeCount ? <strong className="rail-badge">{Math.min(badgeCount, 99)}</strong> : null}
               <span>{navLabel(item, language)}</span>
             </button>
           )
@@ -5381,6 +5433,37 @@ function MatchRow({
   )
 }
 
+function approvedProfileTagsForMatch(match = {}) {
+  const seen = new Set()
+  return (match.profileTags ?? [])
+    .map((tag) => String(tag ?? '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .filter((tag) => {
+      const key = memorySlug(tag)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 12)
+}
+
+function ApprovedProfileTags({ match, language = viewer.language }) {
+  const isDutch = language === 'Nederlands'
+  const tags = approvedProfileTagsForMatch(match)
+  if (!tags.length) return null
+
+  return (
+    <div className="approved-profile-tags" aria-label={isDutch ? 'Goedgekeurde profieltags' : 'Approved profile tags'}>
+      <small>{isDutch ? 'Goedgekeurde tags' : 'Approved tags'}</small>
+      <div>
+        {tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMatchFeedback, language = viewer.language }) {
   const isDutch = language === 'Nederlands'
   const photoPrivacy = normalizePhotoPrivacy(match.photoPrivacy)
@@ -5399,6 +5482,7 @@ function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMat
             {displayDistance(match.distance, language)}
             <b>{displayStatus(match.status, language)}</b>
           </span>
+          <ApprovedProfileTags match={match} language={language} />
           <div className="hero-actions">
             <button type="button" onClick={() => openModal({ type: 'intro' })}>
               <Send size={18} />
@@ -8676,22 +8760,10 @@ function ProfileToolView({
 
   function readPreferences(current) {
     return {
-      values: [...(current.preferences?.values?.length ? current.preferences.values : viewer.preferences.values)],
-      dealbreakers: [
-        ...(current.preferences?.dealbreakers?.length
-          ? current.preferences.dealbreakers
-          : viewer.preferences.dealbreakers),
-      ],
-      visualTaste: [
-        ...(current.preferences?.visualTaste?.length
-          ? current.preferences.visualTaste
-          : viewer.preferences.visualTaste),
-      ],
-      dateRhythm: [
-        ...(current.preferences?.dateRhythm?.length
-          ? current.preferences.dateRhythm
-          : viewer.preferences.dateRhythm),
-      ],
+      values: [...(current.preferences?.values ?? [])],
+      dealbreakers: [...(current.preferences?.dealbreakers ?? [])],
+      visualTaste: [...(current.preferences?.visualTaste ?? [])],
+      dateRhythm: [...(current.preferences?.dateRhythm ?? [])],
     }
   }
 
@@ -8704,9 +8776,6 @@ function ProfileToolView({
         preferences[group] = preferences[group].filter(
           (item) => !signalMatchesText(item, signal.label),
         )
-        if (!preferences[group].length) {
-          preferences[group] = [current.language === 'Nederlands' ? 'Nieuw signaal' : 'New signal']
-        }
       })
 
       return {
@@ -9257,7 +9326,7 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
         </div>
 
         <div className="neural-node-board">
-          {map.nodes.map((node) => {
+          {map.nodes.length ? map.nodes.map((node) => {
             const isProfileTag = Boolean(profileTags[node.id])
             const profileVisible = nodeVisibility[node.id] === true || isProfileTag
             return (
@@ -9292,7 +9361,17 @@ function NeuralMindMap({ map, profile, onRemoveSignal, onAddProfileTag = () => {
                 </div>
               </article>
             )
-          })}
+          }) : (
+            <article className="neural-empty-state">
+              <Sparkles size={18} />
+              <strong>{isDutch ? 'Nog geen AI-tags' : 'No AI tags yet'}</strong>
+              <span>
+                {isDutch
+                  ? 'Typ iets in je bio of AI-box. MatchPulse maakt daar automatisch private tags van voor je score.'
+                  : 'Type in your bio or AI box. MatchPulse will turn it into private tags for scoring.'}
+              </span>
+            </article>
+          )}
         </div>
       </div>
 
@@ -9325,7 +9404,26 @@ function buildNeuralProfile({
   const liveKeywords = extractKeywords(aiInput)
   const liveText = aiInput.trim()
   const normalizedNotes = normalizeMemoryNotes(notes)
-  const firstMemory = normalizedNotes[0] ? memoryThoughtText(normalizedNotes[0]) : 'Still learning your pattern'
+  const firstMemory = normalizedNotes[0] ? memoryThoughtText(normalizedNotes[0]) : ''
+  const defaultPreferenceKeys = new Set(
+    Object.values(viewer.preferences ?? {}).flat().map((item) => memorySlug(item)),
+  )
+  const profilePreferenceValues = (group) =>
+    (profile.preferences?.[group] ?? [])
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+      .filter((item) => !defaultPreferenceKeys.has(memorySlug(item)))
+  const valuesPreference = profilePreferenceValues('values')
+  const dealbreakerPreference = profilePreferenceValues('dealbreakers')
+  const visualTastePreference = profilePreferenceValues('visualTaste')
+  const dateRhythmPreference = profilePreferenceValues('dateRhythm')
+  const hasPreferenceSignals = [
+    ...valuesPreference,
+    ...dealbreakerPreference,
+    ...visualTastePreference,
+    ...dateRhythmPreference,
+  ].length > 0
+  const hasMemorySignals = normalizedNotes.length > 0
   const signalNodes = liveSignals.slice(0, 24).map((signal, index) => {
     const anchor = signalAnchors[signal.kind] ?? signalAnchors.live
     const columnOffset = ((index % 3) - 1) * 8
@@ -9372,97 +9470,114 @@ function buildNeuralProfile({
     size: 122,
     active: axis.strength >= 70,
   }))
-  const learning = Math.min(
-    99,
-    Math.max(
-      74,
-      profile.profileCompletion - 7 + connectedTools.length * 2 + Math.min(40, liveSignals.length) + attentionSignals.length
-        + (attractionDna?.axes?.length ?? 0),
-    ),
+  const hasNeuralContent = Boolean(
+    liveText ||
+    hasSignalText ||
+    liveSignals.length ||
+    attentionSignals.length ||
+    hasPreferenceSignals ||
+    hasMemorySignals,
   )
+  const learning = hasNeuralContent
+    ? Math.min(
+      99,
+      Math.max(
+        42,
+        profile.profileCompletion - 7 + connectedTools.length * 2 + Math.min(40, liveSignals.length) + attentionSignals.length
+          + (attractionDna?.axes?.length ?? 0),
+      ),
+    )
+    : 0
+  const baseNodes = [
+    ...(valuesPreference.length ? [{
+      id: 'values',
+      label: isDutch ? 'Waarden' : 'Values',
+      value: signalValueText(valuesPreference.slice(0, 2).join(' + '), language),
+      kind: 'values',
+      x: 18,
+      y: 24,
+      size: 128,
+      active: includesAny(liveText, ['value', 'honest', 'kind', 'ambitious', 'ambitieus']),
+    }] : []),
+    ...(visualTastePreference.length ? [{
+      id: 'attraction',
+      label: isDutch ? 'Aantrekking' : 'Attraction',
+      value: signalValueText(visualTastePreference.slice(0, 2).join(' + '), language),
+      kind: 'attraction',
+      x: 77,
+      y: 22,
+      size: 138,
+      active: includesAny(liveText, ['attract', 'mooi', 'confident', 'warm', 'kindness']),
+    }] : []),
+    ...(dealbreakerPreference.length ? [{
+      id: 'boundaries',
+      label: isDutch ? 'Grenzen' : 'Boundaries',
+      value: signalValueText(dealbreakerPreference.slice(0, 2).join(' + '), language),
+      kind: 'boundaries',
+      x: 18,
+      y: 72,
+      size: 134,
+      active: includesAny(liveText, ['need', 'no ', 'niet', 'boundary', 'clear', 'respect']),
+    }] : []),
+    ...(dateRhythmPreference.length ? [{
+      id: 'rhythm',
+      label: isDutch ? 'Date-ritme' : 'Date rhythm',
+      value: signalValueText(dateRhythmPreference.slice(0, 2).join(' + '), language),
+      kind: 'rhythm',
+      x: 78,
+      y: 72,
+      size: 130,
+      active: includesAny(liveText, ['date', 'plan', 'avond', 'trip', 'coffee', 'rustig']),
+    }] : []),
+    ...(hasSignalText ? [{
+      id: 'intent',
+      label: isDutch ? 'Ontdekking' : 'Discovery',
+      value: `${displayOption(orientation, language)} · ${isDutch ? 'wederzijds' : 'reciprocal'}`,
+      kind: 'intent',
+      x: 50,
+      y: 16,
+      size: 118,
+      active: includesAny(liveText, ['match', 'relatie', 'partner', 'men', 'women', 'iedereen']),
+    }] : []),
+    ...(connectedTools.length && hasNeuralContent ? [{
+      id: 'sources',
+      label: isDutch ? 'Bronnen' : 'Sources',
+      value: `${connectedTools.length} ${isDutch ? 'gekoppeld' : 'linked'}`,
+      kind: 'sources',
+      x: 50,
+      y: 85,
+      size: 114,
+      active: connectedTools.length > 3,
+    }] : []),
+    ...((liveText || firstMemory) ? [{
+      id: 'live',
+      label: liveText ? (isDutch ? 'Live gedachte' : 'Live thought') : (isDutch ? 'Laatste memory' : 'Latest memory'),
+      value: liveText ? summarizeThought(liveText) : summarizeThought(firstMemory),
+      kind: 'live',
+      x: liveText ? 75 : 30,
+      y: liveText ? 50 : 51,
+      size: liveText ? 152 : 124,
+      active: Boolean(liveText),
+    }] : []),
+  ]
 
   return {
     learning,
-    pulseLabel: liveText ? (isDutch ? 'wordt nu gevormd' : 'rewiring now') : (isDutch ? 'stabiele memory' : 'stable memory'),
+    pulseLabel: hasNeuralContent
+      ? (liveText ? (isDutch ? 'wordt nu gevormd' : 'rewiring now') : (isDutch ? 'stabiele memory' : 'stable memory'))
+      : (isDutch ? 'leeg profiel' : 'empty profile'),
     keywords: liveSignals.length
       ? liveSignals.slice(0, 48)
       : hasSignalText
         ? []
-        : extractProfileSignals(liveKeywords.join(' ') || 'honesty calm chemistry ambition city energy'),
+        : liveKeywords.length
+          ? extractProfileSignals(liveKeywords.join(' '))
+          : [],
     nodes: [
-      {
-        id: 'values',
-        label: isDutch ? 'Waarden' : 'Values',
-        value: signalValueText(profile.preferences.values.slice(0, 2).join(' + '), language),
-        kind: 'values',
-        x: 18,
-        y: 24,
-        size: 128,
-        active: includesAny(liveText, ['value', 'honest', 'kind', 'ambitious', 'ambitieus']),
-      },
-      {
-        id: 'attraction',
-        label: isDutch ? 'Aantrekking' : 'Attraction',
-        value: signalValueText(profile.preferences.visualTaste.slice(0, 2).join(' + '), language),
-        kind: 'attraction',
-        x: 77,
-        y: 22,
-        size: 138,
-        active: includesAny(liveText, ['attract', 'mooi', 'confident', 'warm', 'kindness']),
-      },
-      {
-        id: 'boundaries',
-        label: isDutch ? 'Grenzen' : 'Boundaries',
-        value: signalValueText(profile.preferences.dealbreakers.slice(0, 2).join(' + '), language),
-        kind: 'boundaries',
-        x: 18,
-        y: 72,
-        size: 134,
-        active: includesAny(liveText, ['need', 'no ', 'niet', 'boundary', 'clear', 'respect']),
-      },
-      {
-        id: 'rhythm',
-        label: isDutch ? 'Date-ritme' : 'Date rhythm',
-        value: signalValueText(profile.preferences.dateRhythm.slice(0, 2).join(' + '), language),
-        kind: 'rhythm',
-        x: 78,
-        y: 72,
-        size: 130,
-        active: includesAny(liveText, ['date', 'plan', 'avond', 'trip', 'coffee', 'rustig']),
-      },
-      {
-        id: 'intent',
-        label: isDutch ? 'Ontdekking' : 'Discovery',
-        value: `${displayOption(orientation, language)} · ${isDutch ? 'wederzijds' : 'reciprocal'}`,
-        kind: 'intent',
-        x: 50,
-        y: 16,
-        size: 118,
-        active: includesAny(liveText, ['match', 'relatie', 'partner', 'men', 'women', 'iedereen']),
-      },
-      {
-        id: 'sources',
-        label: isDutch ? 'Bronnen' : 'Sources',
-        value: `${connectedTools.length} ${isDutch ? 'gekoppeld' : 'linked'}`,
-        kind: 'sources',
-        x: 50,
-        y: 85,
-        size: 114,
-        active: connectedTools.length > 3,
-      },
-      {
-        id: 'live',
-        label: liveText ? (isDutch ? 'Live gedachte' : 'Live thought') : (isDutch ? 'Laatste memory' : 'Latest memory'),
-        value: liveText ? summarizeThought(liveText) : summarizeThought(firstMemory),
-        kind: 'live',
-        x: liveText ? 75 : 30,
-        y: liveText ? 50 : 51,
-        size: liveText ? 152 : 124,
-        active: Boolean(liveText),
-      },
+      ...baseNodes,
       ...signalNodes,
       ...attentionNodes,
-      ...attractionDnaNodes,
+      ...(hasNeuralContent ? attractionDnaNodes : []),
     ],
   }
 }

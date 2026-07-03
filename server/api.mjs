@@ -407,6 +407,44 @@ function matchingMemoryText(db, userId) {
     .join(' ')
 }
 
+function cleanProfileTagText(value = '') {
+  return String(value)
+    .replace(/^You said:\s*/i, '')
+    .replace(/^AI tag:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 56)
+}
+
+function uniqueProfileTags(tags = [], limit = 18) {
+  const seen = new Set()
+  return tags
+    .map(cleanProfileTagText)
+    .filter(Boolean)
+    .filter((tag) => {
+      const key = slugify(tag)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, limit)
+}
+
+function publicProfileTagsForUser(db, user) {
+  const profile = user?.profile ?? {}
+  const preferences = profile.preferences ?? {}
+  const approvedPreferenceTags = [
+    ...(preferences.values ?? []),
+    ...(preferences.visualTaste ?? []),
+    ...(preferences.dateRhythm ?? []),
+  ]
+  const approvedMemoryTags = normalizeMemories(db?.memories?.[user?.id])
+    .filter((memory) => ['profile', 'shareable'].includes(memory.visibility))
+    .map((memory) => memory.text)
+
+  return uniqueProfileTags([...approvedMemoryTags, ...approvedPreferenceTags])
+}
+
 function hashNumber(value, min, max) {
   const text = String(value)
   let hash = 0
@@ -418,18 +456,10 @@ function hashNumber(value, min, max) {
 
 function normalizePreferences(profile) {
   return {
-    values: profile.preferences?.values?.length
-      ? profile.preferences.values
-      : ['Honesty', 'Warmth', 'Growth', 'Clear communication'],
-    dealbreakers: profile.preferences?.dealbreakers?.length
-      ? profile.preferences.dealbreakers
-      : ['Poor communication', 'Vague intent'],
-    visualTaste: profile.preferences?.visualTaste?.length
-      ? profile.preferences.visualTaste
-      : ['Natural style', 'Warm eyes', 'Quiet confidence'],
-    dateRhythm: profile.preferences?.dateRhythm?.length
-      ? profile.preferences.dateRhythm
-      : ['Coffee first', 'Walks', 'Dinner after trust'],
+    values: Array.isArray(profile.preferences?.values) ? profile.preferences.values : [],
+    dealbreakers: Array.isArray(profile.preferences?.dealbreakers) ? profile.preferences.dealbreakers : [],
+    visualTaste: Array.isArray(profile.preferences?.visualTaste) ? profile.preferences.visualTaste : [],
+    dateRhythm: Array.isArray(profile.preferences?.dateRhythm) ? profile.preferences.dateRhythm : [],
   }
 }
 
@@ -1170,10 +1200,12 @@ function createDraftProfile(userNumber, provider, contact = '') {
   const fallbackEmail = `alex${userNumber}@matchpulse.local`
 
   return withDatingDefaults({
-    ...viewer,
     id: `user-${randomUUID()}`,
     name: `Alex ${userNumber}`,
     fullName: `Alex ${userNumber}`,
+    age: 28,
+    role: 'Beta member',
+    city: 'Nearby',
     email: contactInfo.email || fallbackEmail,
     phone: contactInfo.phone,
     emailVerified: false,
@@ -1181,8 +1213,17 @@ function createDraftProfile(userNumber, provider, contact = '') {
     contact: contactInfo.contact,
     provider,
     plan: 'Beta',
+    photo: viewer.photo,
+    portrait: viewer.photo,
+    orientation: 'Open',
+    genderIdentity: 'Not shown',
+    interestedIn: 'Everyone',
+    photoPrivacy: 'public',
+    lookingFor: 'Serious',
+    bio: '',
+    about: '',
     profileCompletion: 35,
-    preferences: normalizePreferences(viewer),
+    preferences: normalizePreferences({ preferences: {} }),
   })
 }
 
@@ -1832,6 +1873,7 @@ function buildMatch(currentUser, candidateUser, db) {
     photoPrivacy: profile.photoPrivacy,
     attractionDna,
     about: profile.bio || profile.about || 'Still teaching MatchPulse their profile.',
+    profileTags: publicProfileTagsForUser(db, candidateUser),
     shared: seed?.shared ?? [
       `You both show signals around ${profile.lookingFor.toLowerCase()} intent.`,
       profile.language && userProfile.language === profile.language
