@@ -445,6 +445,177 @@ function publicProfileTagsForUser(db, user) {
   return uniqueProfileTags([...approvedMemoryTags, ...approvedPreferenceTags])
 }
 
+const sharedMatchConcepts = [
+  {
+    id: 'technology',
+    en: 'technology and AI curiosity',
+    nl: 'technologie en AI-nieuwsgierigheid',
+    terms: ['technology', 'technologie', 'tech', 'ai', 'artificial intelligence', 'kunstmatige', 'innovation', 'innovatie'],
+  },
+  {
+    id: 'creativity',
+    en: 'creative projects and original ideas',
+    nl: 'creatieve projecten en originele ideeen',
+    terms: ['creative', 'creatief', 'creativity', 'design', 'ontwerp', 'art', 'kunst', 'music', 'muziek', 'project'],
+  },
+  {
+    id: 'deepTalk',
+    en: 'deep conversations and emotional clarity',
+    nl: 'diepe gesprekken en emotionele helderheid',
+    terms: ['deep', 'diepe', 'conversation', 'gesprek', 'gesprekken', 'honest', 'eerlijk', 'clarity', 'helderheid', 'emotional'],
+  },
+  {
+    id: 'growth',
+    en: 'growth, ambition and future-building',
+    nl: 'groei, ambitie en toekomst bouwen',
+    terms: ['growth', 'groei', 'ambition', 'ambitie', 'future', 'toekomst', 'drive', 'gedreven', 'learn', 'leren'],
+  },
+  {
+    id: 'warmth',
+    en: 'warmth, kindness and calm presence',
+    nl: 'warmte, zachtheid en rustige aanwezigheid',
+    terms: ['warm', 'warmte', 'kind', 'kindness', 'lief', 'zacht', 'calm', 'rustig', 'rust'],
+  },
+  {
+    id: 'active',
+    en: 'active plans, walking and going out',
+    nl: 'actieve plannen, wandelen en eropuit gaan',
+    terms: ['walk', 'wandeling', 'wandelen', 'active', 'actief', 'travel', 'reizen', 'city', 'stad', 'coffee', 'koffie'],
+  },
+  {
+    id: 'humor',
+    en: 'humor and playful energy',
+    nl: 'humor en speelse energie',
+    terms: ['humor', 'funny', 'grappig', 'laugh', 'lachen', 'playful', 'speels'],
+  },
+]
+
+function normalizeSignalLabel(value = '') {
+  return String(value)
+    .replace(/^You said:\s*/i, '')
+    .replace(/^AI tag:\s*/i, '')
+    .replace(/[^\p{L}\p{N}\s/+&-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64)
+}
+
+function collectMatchSignalLabels(user, db, { includePrivate = true } = {}) {
+  const profile = user?.profile ?? {}
+  const preferences = profile.preferences ?? {}
+  const preferenceLabels = [
+    ...(preferences.values ?? []),
+    ...(preferences.visualTaste ?? []),
+    ...(preferences.dateRhythm ?? []),
+    ...(preferences.dealbreakers ?? []),
+  ]
+  const memoryLabels = normalizeMemories(db?.memories?.[user?.id])
+    .filter((memory) => includePrivate || ['profile', 'shareable'].includes(memory.visibility))
+    .map((memory) => memory.text)
+  const profileLabels = [
+    profile.role,
+    profile.lookingFor,
+    profile.bio,
+    profile.about,
+  ]
+
+  return uniqueProfileTags([...preferenceLabels, ...memoryLabels, ...profileLabels], 90)
+    .map(normalizeSignalLabel)
+    .filter(Boolean)
+}
+
+function labelTextForConcept(concept, isDutch) {
+  return isDutch ? concept.nl : concept.en
+}
+
+function sharedExactLabels(leftLabels, rightLabels, limit = 4) {
+  const rightByKey = new Map(rightLabels.map((label) => [slugify(label), label]))
+  const shared = []
+  leftLabels.forEach((label) => {
+    const key = slugify(label)
+    if (!key || !rightByKey.has(key)) return
+    shared.push(rightByKey.get(key) || label)
+  })
+  return uniqueProfileTags(shared, limit)
+}
+
+function uniqueSharedLines(lines = [], limit = 4) {
+  const seen = new Set()
+  return lines
+    .map((line) => String(line ?? '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const key = slugify(line)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, limit)
+}
+
+function textContainsConcept(labels, concept) {
+  const text = labels.join(' ').toLowerCase()
+  return concept.terms.some((term) => {
+    const cleanTerm = term.toLowerCase()
+    if (cleanTerm.length <= 3) {
+      return new RegExp(`(^|[^a-zA-ZÀ-ÿ0-9])${cleanTerm}([^a-zA-ZÀ-ÿ0-9]|$)`).test(text)
+    }
+    return text.includes(cleanTerm)
+  })
+}
+
+function buildSharedMatchSignals(currentUser, candidateUser, db, context = {}) {
+  const userProfile = currentUser.profile ?? {}
+  const profile = candidateUser.profile ?? {}
+  const isDutch = userProfile.language === 'Nederlands'
+  const currentLabels = collectMatchSignalLabels(currentUser, db, { includePrivate: true })
+  const candidateLabels = collectMatchSignalLabels(candidateUser, db, { includePrivate: true })
+  const exactMatches = sharedExactLabels(currentLabels, candidateLabels, 3)
+  const conceptMatches = sharedMatchConcepts
+    .filter((concept) => textContainsConcept(currentLabels, concept) && textContainsConcept(candidateLabels, concept))
+    .map((concept) => labelTextForConcept(concept, isDutch))
+  const lines = [
+    ...exactMatches.map((tag) => isDutch
+      ? `Concrete overlap: ${tag} komt in jullie beide profielsignalen terug.`
+      : `Concrete overlap: ${tag} appears in both profile signals.`),
+    ...conceptMatches.slice(0, 3).map((concept) => isDutch
+      ? `Match-thema: jullie profielteksten wijzen allebei naar ${concept}.`
+      : `Match theme: both profile texts point toward ${concept}.`),
+  ]
+
+  if (userProfile.lookingFor && profile.lookingFor && userProfile.lookingFor === profile.lookingFor) {
+    lines.push(isDutch
+      ? `Intentie klopt: jullie zoeken allebei ${String(profile.lookingFor).toLowerCase()}, dus de eerste chat kan concreet over verwachtingen gaan.`
+      : `Intent matches: you both seek ${String(profile.lookingFor).toLowerCase()}, so the first chat can be concrete about expectations.`)
+  }
+
+  if (context.attentionBonus > 0) {
+    lines.push(isDutch
+      ? 'Privé-leermodel: jouw kijk-, foto- of chatgedrag verhoogt de matchscore; ruwe details blijven verborgen.'
+      : 'Private learning model: your view, photo or chat behavior lifts the score; raw details stay hidden.')
+  }
+
+  if (userProfile.language && profile.language && userProfile.language === profile.language) {
+    lines.push(isDutch
+      ? `Gespreksbasis: jullie kunnen allebei in ${profile.language} praten.`
+      : `Conversation base: you can both communicate in ${profile.language}.`)
+  }
+
+  if (!lines.length) {
+    lines.push(isDutch
+      ? 'Nog weinig concrete overlap: voeg meer bio of AI-tags toe, dan wordt deze uitleg specifieker.'
+      : 'Not much concrete overlap yet: add more bio or AI tags and this explanation becomes more specific.')
+  }
+
+  if ((context.uncertainty ?? 99) < 16 && lines.length < 4) {
+    lines.push(isDutch
+      ? 'AI-vertrouwen is hoog omdat meerdere echte tags, intentie en gedrag dezelfde richting uit wijzen.'
+      : 'AI confidence is high because multiple real tags, intent and behavior point in the same direction.')
+  }
+
+  return uniqueSharedLines(lines, 4)
+}
+
 function hashNumber(value, min, max) {
   const text = String(value)
   let hash = 0
@@ -1851,6 +2022,11 @@ function buildMatch(currentUser, candidateUser, db) {
     attractionDna,
     overlap,
   })
+  const sharedSignals = buildSharedMatchSignals(currentUser, candidateUser, db, {
+    uncertainty,
+    attentionBonus,
+    overlap,
+  })
 
   return {
     id: candidateUser.id,
@@ -1874,15 +2050,7 @@ function buildMatch(currentUser, candidateUser, db) {
     attractionDna,
     about: profile.bio || profile.about || 'Still teaching MatchPulse their profile.',
     profileTags: publicProfileTagsForUser(db, candidateUser),
-    shared: seed?.shared ?? [
-      `You both show signals around ${profile.lookingFor.toLowerCase()} intent.`,
-      profile.language && userProfile.language === profile.language
-        ? `You can both communicate in ${profile.language}.`
-        : 'Your profile language still needs a bit more signal.',
-      uncertainty < 16
-        ? 'The AI sees enough shared signal for a confident introduction.'
-        : 'There is promise here, but MatchPulse needs more feedback.',
-    ],
+    shared: seed?.shared ?? sharedSignals,
     metrics: seed?.metrics ?? {
       Values: clamp(score + 2, 55, 98),
       Attraction: clamp(
