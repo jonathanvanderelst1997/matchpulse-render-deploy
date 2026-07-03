@@ -465,11 +465,15 @@ function publicProfileTagsForUser(db, user) {
     ...(profile.publicTags ?? []),
     ...(preferences.publicTags ?? []),
   ]
+  const explicitTags = uniqueProfileTags(explicitPublicTags, 48)
+  if (explicitTags.length) return explicitTags
+
   const approvedMemoryTags = normalizeMemories(db?.memories?.[user?.id])
     .filter((memory) => ['profile', 'shareable'].includes(memory.visibility))
     .map((memory) => memory.text)
 
-  return uniqueProfileTags([...approvedMemoryTags, ...explicitPublicTags], 48)
+  const isSeedUser = Boolean(user?.isSeed || user?.provider === 'seed' || String(user?.id ?? '').startsWith('seed-'))
+  return isSeedUser ? uniqueProfileTags(approvedMemoryTags, 48) : []
 }
 
 const sharedMatchConcepts = [
@@ -534,6 +538,12 @@ function normalizeSignalLabel(value = '') {
 }
 
 function collectMatchSignalLabels(user, db, { includePrivate = true } = {}) {
+  if (!includePrivate) {
+    return publicProfileTagsForUser(db, user)
+      .map(normalizeSignalLabel)
+      .filter(Boolean)
+  }
+
   const profile = user?.profile ?? {}
   const preferences = profile.preferences ?? {}
   const preferenceLabels = [
@@ -655,11 +665,17 @@ function hashNumber(value, min, max) {
 }
 
 function normalizePreferences(profile) {
+  const publicTags = [
+    ...(Array.isArray(profile.publicTags) ? profile.publicTags : []),
+    ...(Array.isArray(profile.preferences?.publicTags) ? profile.preferences.publicTags : []),
+  ]
+
   return {
     values: Array.isArray(profile.preferences?.values) ? profile.preferences.values : [],
     dealbreakers: Array.isArray(profile.preferences?.dealbreakers) ? profile.preferences.dealbreakers : [],
     visualTaste: Array.isArray(profile.preferences?.visualTaste) ? profile.preferences.visualTaste : [],
     dateRhythm: Array.isArray(profile.preferences?.dateRhythm) ? profile.preferences.dateRhythm : [],
+    publicTags: uniqueProfileTags(publicTags, 160),
   }
 }
 

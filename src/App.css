@@ -6790,7 +6790,6 @@ button {
 .privacy-select-line {
   display: grid;
   gap: 8px;
-  margin-top: 16px;
   color: #737783;
   font-weight: 760;
 }
@@ -6807,6 +6806,74 @@ button {
 
 .preference-card .segmented {
   width: fit-content;
+}
+
+.preference-card .privacy-settings-grid {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0 18px;
+}
+
+.preference-card .privacy-choice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  margin: 16px 0 0;
+}
+
+.preference-card .privacy-settings-grid .privacy-choice-row {
+  margin: 0;
+}
+
+.privacy-choice-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-visibility-toggle {
+  min-width: 132px;
+  min-height: 46px;
+  display: inline-grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #737783;
+  box-shadow: 0 12px 30px rgba(34, 39, 54, 0.06);
+  text-align: left;
+}
+
+.field-visibility-toggle svg {
+  grid-row: 1 / span 2;
+}
+
+.field-visibility-toggle span {
+  color: var(--ink);
+  font-weight: 850;
+  line-height: 1;
+}
+
+.field-visibility-toggle small {
+  color: #8a8f9c;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.field-visibility-toggle.active {
+  border-color: rgba(122, 198, 171, 0.58);
+  background: rgba(232, 248, 242, 0.96);
+  color: #278067;
+}
+
+.field-visibility-toggle.active span,
+.field-visibility-toggle.active small {
+  color: #278067;
 }
 
 .tool-list {

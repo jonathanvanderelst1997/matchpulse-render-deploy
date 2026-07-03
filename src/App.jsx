@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Compass,
   Eye,
+  EyeOff,
   Flame,
   Globe2,
   Heart,
@@ -8924,6 +8925,12 @@ function ProfileToolView({
   )
   const profilePhotos = normalizeOnboardingPhotos(photos.length ? photos : [profile.photo])
   const activePhotoPosition = photoPositions[profile.photo] ?? { x: 50, y: 50 }
+  const isDutchProfile = isDutchLanguage(profile.language)
+  const fieldVisibilityDefaults = {
+    genderIdentity: 'private',
+    interestedIn: 'private',
+    photoPrivacy: 'private',
+  }
   const neuralMap = useMemo(
     () =>
       buildNeuralProfile({
@@ -8943,6 +8950,44 @@ function ProfileToolView({
   function updateField(field, value) {
     if (field === 'bio') setDismissedProfileSignals([])
     setProfile((current) => ({ ...current, [field]: value }))
+  }
+
+  function fieldIsPublic(field) {
+    const value = profile.fieldVisibility?.[field] ?? fieldVisibilityDefaults[field] ?? 'private'
+    return value === 'public'
+  }
+
+  function toggleFieldVisibility(field) {
+    setProfile((current) => {
+      const currentValue = current.fieldVisibility?.[field] ?? fieldVisibilityDefaults[field] ?? 'private'
+      const nextValue = currentValue === 'public' ? 'private' : 'public'
+      return {
+        ...current,
+        fieldVisibility: {
+          ...(current.fieldVisibility ?? {}),
+          [field]: nextValue,
+        },
+      }
+    })
+  }
+
+  function renderFieldVisibilityToggle(field) {
+    const visible = fieldIsPublic(field)
+    return (
+      <button
+        className={`field-visibility-toggle ${visible ? 'active' : ''}`}
+        type="button"
+        onClick={() => toggleFieldVisibility(field)}
+        aria-pressed={visible}
+        aria-label={visible
+          ? (isDutchProfile ? 'Maak verborgen op profiel' : 'Hide on profile')
+          : (isDutchProfile ? 'Maak zichtbaar op profiel' : 'Show on profile')}
+      >
+        {visible ? <Eye size={16} /> : <EyeOff size={16} />}
+        <span>{visible ? (isDutchProfile ? 'Zichtbaar' : 'Visible') : (isDutchProfile ? 'Verborgen' : 'Hidden')}</span>
+        <small>{visible ? (isDutchProfile ? 'Op profiel' : 'On profile') : (isDutchProfile ? 'Alleen matching' : 'Matching only')}</small>
+      </button>
+    )
   }
 
   function readPreferences(current) {
@@ -9099,13 +9144,17 @@ function ProfileToolView({
   function addExplicitPublicTag(targetProfile, tag) {
     const cleanTag = String(tag ?? '').replace(/\s+/g, ' ').trim()
     if (!cleanTag) return targetProfile
-    const currentTags = targetProfile.preferences?.publicTags ?? []
+    const currentTags = [
+      ...(Array.isArray(targetProfile.publicTags) ? targetProfile.publicTags : []),
+      ...(Array.isArray(targetProfile.preferences?.publicTags) ? targetProfile.preferences.publicTags : []),
+    ]
     const nextTags = [...currentTags, cleanTag].filter((item, index, items) => {
       const key = profileSignalMergeKey(item)
       return key && items.findIndex((candidate) => profileSignalMergeKey(candidate) === key) === index
-    })
+    }).slice(0, 160)
     return {
       ...targetProfile,
+      publicTags: nextTags,
       preferences: {
         ...(targetProfile.preferences ?? {}),
         publicTags: nextTags,
@@ -9115,11 +9164,24 @@ function ProfileToolView({
 
   function removeExplicitPublicTag(targetProfile, tag) {
     const removeKey = profileSignalMergeKey(tag)
+    if (!removeKey) return targetProfile
+    const currentTags = [
+      ...(Array.isArray(targetProfile.publicTags) ? targetProfile.publicTags : []),
+      ...(Array.isArray(targetProfile.preferences?.publicTags) ? targetProfile.preferences.publicTags : []),
+    ]
+    const nextTags = currentTags
+      .filter((item, index, items) => {
+        const key = profileSignalMergeKey(item)
+        return key && items.findIndex((candidate) => profileSignalMergeKey(candidate) === key) === index
+      })
+      .filter((item) => profileSignalMergeKey(item) !== removeKey)
+
     return {
       ...targetProfile,
+      publicTags: nextTags,
       preferences: {
         ...(targetProfile.preferences ?? {}),
-        publicTags: (targetProfile.preferences?.publicTags ?? []).filter((item) => profileSignalMergeKey(item) !== removeKey),
+        publicTags: nextTags,
       },
     }
   }
@@ -9299,34 +9361,47 @@ function ProfileToolView({
           <p className="privacy-settings-note">
             {toolCopy.privacyNote}
           </p>
-          <label className="privacy-select-line">
-            <span>{toolCopy.iAm}</span>
-            <select
-              value={normalizeGenderIdentity(profile.genderIdentity)}
-              onChange={(event) => updateField('genderIdentity', event.target.value)}
-            >
-              {genderIdentityOptions.map((option) => (
-                <option value={option} key={option}>
-                  {displayOption(option, profile.language)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div>
-            <span className="segmented-label">{toolCopy.showMe}</span>
-            <Segmented
-              value={orientation}
-              options={interestPreferences}
-              labels={Object.fromEntries(interestPreferences.map((option) => [option, displayOption(option, profile.language)]))}
-              onChange={setOrientation}
-            />
-            <span className="segmented-label">{toolCopy.photoVisibility}</span>
-            <Segmented
-              value={normalizePhotoPrivacy(profile.photoPrivacy)}
-              options={photoPrivacyOptions.map((option) => option.id)}
-              labels={Object.fromEntries(photoPrivacyOptions.map((option) => [option.id, displayOption(option.id, profile.language)]))}
-              onChange={(value) => updateField('photoPrivacy', value)}
-            />
+          <div className="privacy-choice-row">
+            <label className="privacy-select-line">
+              <span>{toolCopy.iAm}</span>
+              <select
+                value={normalizeGenderIdentity(profile.genderIdentity)}
+                onChange={(event) => updateField('genderIdentity', event.target.value)}
+              >
+                {genderIdentityOptions.map((option) => (
+                  <option value={option} key={option}>
+                    {displayOption(option, profile.language)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {renderFieldVisibilityToggle('genderIdentity')}
+          </div>
+          <div className="privacy-settings-grid">
+            <div className="privacy-choice-row">
+              <div className="privacy-choice-main">
+                <span className="segmented-label">{toolCopy.showMe}</span>
+                <Segmented
+                  value={orientation}
+                  options={interestPreferences}
+                  labels={Object.fromEntries(interestPreferences.map((option) => [option, displayOption(option, profile.language)]))}
+                  onChange={setOrientation}
+                />
+              </div>
+              {renderFieldVisibilityToggle('interestedIn')}
+            </div>
+            <div className="privacy-choice-row">
+              <div className="privacy-choice-main">
+                <span className="segmented-label">{toolCopy.photoVisibility}</span>
+                <Segmented
+                  value={normalizePhotoPrivacy(profile.photoPrivacy)}
+                  options={photoPrivacyOptions.map((option) => option.id)}
+                  labels={Object.fromEntries(photoPrivacyOptions.map((option) => [option.id, displayOption(option.id, profile.language)]))}
+                  onChange={(value) => updateField('photoPrivacy', value)}
+                />
+              </div>
+              {renderFieldVisibilityToggle('photoPrivacy')}
+            </div>
           </div>
           <button type="button" onClick={saveProfileChanges}>
             {toolCopy.saveRecalculate}
@@ -9700,7 +9775,7 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
                     onClick={() => setNodePublic(node, false)}
                     aria-pressed={!profileVisible}
                   >
-                    <Brain size={13} />
+                    <EyeOff size={13} />
                     {isDutch ? 'Alleen AI' : 'AI only'}
                   </button>
                 </div>
