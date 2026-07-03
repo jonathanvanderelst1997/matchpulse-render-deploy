@@ -453,6 +453,12 @@ const sharedMatchConcepts = [
     terms: ['technology', 'technologie', 'tech', 'ai', 'artificial intelligence', 'kunstmatige', 'innovation', 'innovatie'],
   },
   {
+    id: 'cats',
+    en: 'cats, animals and gentle care',
+    nl: 'katten, dierenliefde en zachte zorg',
+    terms: ['cat', 'cats', 'kat', 'katten', 'dieren', 'dierenliefhebber', 'animal', 'animals'],
+  },
+  {
     id: 'creativity',
     en: 'creative projects and original ideas',
     nl: 'creatieve projecten en originele ideeen',
@@ -568,19 +574,21 @@ function buildSharedMatchSignals(currentUser, candidateUser, db, context = {}) {
   const userProfile = currentUser.profile ?? {}
   const profile = candidateUser.profile ?? {}
   const isDutch = userProfile.language === 'Nederlands'
-  const currentLabels = collectMatchSignalLabels(currentUser, db, { includePrivate: true })
-  const candidateLabels = collectMatchSignalLabels(candidateUser, db, { includePrivate: true })
-  const exactMatches = sharedExactLabels(currentLabels, candidateLabels, 3)
+  const publicCurrentLabels = collectMatchSignalLabels(currentUser, db, { includePrivate: false })
+  const publicCandidateLabels = collectMatchSignalLabels(candidateUser, db, { includePrivate: false })
+  const privateCurrentLabels = collectMatchSignalLabels(currentUser, db, { includePrivate: true })
+  const privateCandidateLabels = collectMatchSignalLabels(candidateUser, db, { includePrivate: true })
+  const exactMatches = sharedExactLabels(publicCurrentLabels, publicCandidateLabels, 3)
   const conceptMatches = sharedMatchConcepts
-    .filter((concept) => textContainsConcept(currentLabels, concept) && textContainsConcept(candidateLabels, concept))
+    .filter((concept) => textContainsConcept(privateCurrentLabels, concept) && textContainsConcept(privateCandidateLabels, concept))
     .map((concept) => labelTextForConcept(concept, isDutch))
   const lines = [
-    ...exactMatches.map((tag) => isDutch
-      ? `Concrete overlap: ${tag} komt in jullie beide profielsignalen terug.`
-      : `Concrete overlap: ${tag} appears in both profile signals.`),
-    ...conceptMatches.slice(0, 3).map((concept) => isDutch
+    ...conceptMatches.slice(0, 4).map((concept) => isDutch
       ? `Match-thema: jullie profielteksten wijzen allebei naar ${concept}.`
       : `Match theme: both profile texts point toward ${concept}.`),
+    ...exactMatches.map((tag) => isDutch
+      ? `Publieke tag-overlap: ${tag} staat in jullie zichtbare profielsignalen.`
+      : `Public tag overlap: ${tag} appears in both visible profile signals.`),
   ]
 
   if (userProfile.lookingFor && profile.lookingFor && userProfile.lookingFor === profile.lookingFor) {
@@ -607,7 +615,7 @@ function buildSharedMatchSignals(currentUser, candidateUser, db, context = {}) {
       : 'AI confidence is high because multiple real tags, intent and behavior point in the same direction.')
   }
 
-  return uniqueSharedLines(lines, 4)
+  return uniqueSharedLines(lines, 5)
 }
 
 function hashNumber(value, min, max) {

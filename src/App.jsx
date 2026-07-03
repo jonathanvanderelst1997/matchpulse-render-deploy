@@ -3723,6 +3723,25 @@ function App() {
     }
   }
 
+  async function persistProfileSnapshot(nextProfile) {
+    setProfileDraft(nextProfile)
+    setOnboardingDraft((current) => ({ ...current, ...nextProfile }))
+    if (!sessionId) return
+    try {
+      const state = await saveProfile(sessionId, {
+        ...nextProfile,
+        interestedIn: orientation,
+        orientation: nextProfile.orientation,
+        genderIdentity: normalizeGenderIdentity(nextProfile.genderIdentity),
+        photoPrivacy: normalizePhotoPrivacy(nextProfile.photoPrivacy),
+        lookingFor: intent,
+      })
+      applyAppState(state)
+    } catch (error) {
+      showToast(error.message)
+    }
+  }
+
   async function saveProfileChanges() {
     if (!sessionId) {
       setActiveView('discover')
@@ -4155,6 +4174,7 @@ function App() {
             matches={visibleMatches}
             selectedMatch={selectedMatch}
             selectMatch={selectMatchInMessages}
+            openMatchProfile={(matchId) => openMatchProfile(matchId, 'messages')}
             messages={messages}
             profile={profileDraft}
             plannedDates={plannedDates}
@@ -4259,6 +4279,7 @@ function App() {
             removePhoto={removeOnboardingPhoto}
             reorderPhoto={reorderOnboardingPhoto}
             saveProfileChanges={saveProfileChanges}
+            persistProfileSnapshot={persistProfileSnapshot}
           />
           )
         ) : null}
@@ -5568,14 +5589,17 @@ function MatchProfileView({ match, memoryNotes, openModal, setActiveView, submit
   const language = profile?.language ?? viewer.language
   const isDutch = language === 'Nederlands'
   const backToDeepMatch = returnView === 'matches'
+  const backToMessages = returnView === 'messages'
   return (
     <section className="secondary-screen match-profile-screen">
       <div className="match-profile-toolbar">
         <button type="button" onClick={() => setActiveView(returnView)}>
           <ChevronLeft size={18} />
-          {backToDeepMatch
-            ? (isDutch ? 'Terug naar Deep Match' : 'Back to Deep Match')
-            : (isDutch ? 'Terug naar Radar' : 'Back to Radar')}
+          {backToMessages
+            ? (isDutch ? 'Terug naar chat' : 'Back to chat')
+            : backToDeepMatch
+              ? (isDutch ? 'Terug naar Deep Match' : 'Back to Deep Match')
+              : (isDutch ? 'Terug naar Radar' : 'Back to Radar')}
         </button>
         <button type="button" onClick={() => setActiveView('discover')}>
           <Compass size={18} />
@@ -6647,6 +6671,7 @@ function MessagesView({
   matches: matchList,
   selectedMatch,
   selectMatch,
+  openMatchProfile,
   messages,
   profile,
   plannedDates = [],
@@ -6837,7 +6862,14 @@ function MessagesView({
             <button className="chat-back-button" type="button" onClick={() => setChatOpen(false)} aria-label={isDutch ? 'Terug naar berichten' : 'Back to messages'}>
               <ChevronLeft size={20} />
             </button>
-            <Avatar image={selectedMatch.portrait} online photoPrivacy={selectedMatch.photoPrivacy} />
+            <button
+              className="conversation-avatar-button"
+              type="button"
+              onClick={() => openModal({ type: 'photoAlbum' })}
+              aria-label={isDutch ? `Open fotoalbum van ${selectedMatch.name}` : `Open ${selectedMatch.name}'s photo album`}
+            >
+              <Avatar image={selectedMatch.portrait} online photoPrivacy={selectedMatch.photoPrivacy} />
+            </button>
             <span>
               <strong>{selectedMatch.name}</strong>
               <small>
@@ -6858,6 +6890,10 @@ function MessagesView({
                 <button type="button" onClick={() => openModal({ type: 'report' })}>
                   {messageCopy.block}
                 </button>
+                <button type="button" onClick={() => openMatchProfile(selectedMatch.id)}>
+                  <UserRound size={17} />
+                  {isDutch ? 'Open profiel' : 'Open profile'}
+                </button>
               </div>
             ) : (
               <div className="conversation-actions">
@@ -6870,6 +6906,10 @@ function MessagesView({
                     {isDutch ? 'Date plannen' : messageCopy.planDate}
                   </button>
                 ) : null}
+                <button type="button" onClick={() => openMatchProfile(selectedMatch.id)}>
+                  <UserRound size={17} />
+                  {isDutch ? 'Open profiel' : 'Open profile'}
+                </button>
               </div>
             )}
           </div>
@@ -8691,6 +8731,7 @@ function ProfileToolView({
   removePhoto = () => {},
   reorderPhoto = () => {},
   saveProfileChanges,
+  persistProfileSnapshot = () => {},
 }) {
   const toolCopy = {
     kicker: 'Your AI profile',
@@ -8937,11 +8978,11 @@ function ProfileToolView({
   function setNeuralNodeProfileVisibility(node, isPublic) {
     const group = neuralNodePreferenceGroup(node)
     const tag = neuralNodeTagText(node)
-    setProfile((current) => (
-      isPublic
-        ? addProfilePreferenceTag(current, tag, group)
-        : removeProfilePreferenceTag(current, tag)
-    ))
+    const nextProfile = isPublic
+      ? addProfilePreferenceTag(profile, tag, group)
+      : removeProfilePreferenceTag(profile, tag)
+    setProfile(nextProfile)
+    persistProfileSnapshot(nextProfile)
   }
 
   return (
@@ -9229,6 +9270,46 @@ function profileInsightCategory(signal = {}, language = viewer.language) {
   return isDutch ? 'Waarden' : 'Values'
 }
 
+const profileSignalMergeRules = [
+  { key: 'technology', terms: ['technologie', 'technology', 'tech', 'ai-curiosity', 'ai-curious', 'innovatie', 'innovation'] },
+  { key: 'photography', terms: ['photography', 'fotografie', 'photo', 'foto'] },
+  { key: 'music', terms: ['music', 'muziek'] },
+  { key: 'deep-conversations', terms: ['deep-conversations', 'diepe-connectie', 'diepe-gesprekken', 'gesprekken'] },
+  { key: 'creativity', terms: ['creatief', 'creative', 'creativiteit', 'creatieve-projecten', 'creatieveling'] },
+  { key: 'growth', terms: ['groei', 'growth', 'groeien'] },
+  { key: 'humor', terms: ['humor', 'humor-lichtheid'] },
+  { key: 'travel', terms: ['reizen', 'travel', 'steden-ontdekken'] },
+  { key: 'cats', terms: ['kat', 'katten', 'cats', 'dierenliefhebber'] },
+  { key: 'social-work', terms: ['sociaal-werker', 'dienstverlening', 'helpen-mensen'] },
+]
+
+function profileSignalMergeKey(value = '') {
+  const key = memorySlug(value)
+  const matchedRule = profileSignalMergeRules.find((rule) =>
+    rule.terms.some((term) => key === term || key.includes(term)),
+  )
+  return matchedRule?.key ?? key
+}
+
+function isUsefulProfileSignalLabel(value = '') {
+  const key = memorySlug(value)
+  if (!key || key.length < 3) return false
+  return ![
+    'upload',
+    'uploads',
+    'kruisjes',
+    'screenshot',
+    'screenshots',
+    'session',
+    'expired',
+    'feedback',
+    'beta',
+    'foto-uploaden',
+    'for-uploaden',
+    'profieltool',
+  ].some((blocked) => key.includes(blocked))
+}
+
 function ProfileInsightControlPanel({ signals = [], profile, onRemoveSignal, onAddProfileTag }) {
   const language = profile?.language ?? viewer.language
   const isDutch = isDutchLanguage(language)
@@ -9311,10 +9392,15 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
   const language = profile.language ?? viewer.language
   const isDutch = isDutchLanguage(language)
   const [nodeVisibility, setNodeVisibility] = useState({})
-  const [profileTags, setProfileTags] = useState({})
+  const approvedProfileTagKeys = new Set([
+    ...(profile.preferences?.values ?? []),
+    ...(profile.preferences?.visualTaste ?? []),
+    ...(profile.preferences?.dateRhythm ?? []),
+  ].map(profileSignalMergeKey))
   const insightNodes = insightSignals.reduce((nodes, signal, index) => {
     const value = signalLabel(signal, language)
-    const key = memorySlug(value)
+    if (!isUsefulProfileSignalLabel(value)) return nodes
+    const key = profileSignalMergeKey(value)
     if (!key || nodes.some((node) => node.key === key)) return nodes
     return [
       ...nodes,
@@ -9334,21 +9420,21 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
   }, [])
   const displayNodes = [...insightNodes, ...map.nodes.filter((node) => !String(node.id).startsWith('signal-'))].reduce(
     (nodes, node) => {
-      const key = memorySlug(`${node.label}-${node.value}`)
+      if (!isUsefulProfileSignalLabel(node.value || node.label)) return nodes
+      const key = profileSignalMergeKey(node.value || node.label)
       if (!key || nodes.some((item) => item.key === key)) return nodes
       return [...nodes, { ...node, key }]
     },
     [],
   )
+  const publicNodes = displayNodes.filter((node) => (
+    Object.hasOwn(nodeVisibility, node.id)
+      ? nodeVisibility[node.id]
+      : approvedProfileTagKeys.has(profileSignalMergeKey(node.value || node.label))
+  ))
 
   function setNodePublic(node, isPublic) {
     setNodeVisibility((current) => ({ ...current, [node.id]: isPublic }))
-    setProfileTags((current) => {
-      const next = { ...current }
-      if (isPublic) next[node.id] = true
-      else delete next[node.id]
-      return next
-    })
     onSetProfileTag(node, isPublic)
   }
 
@@ -9396,10 +9482,25 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
           <strong>{map.pulseLabel}</strong>
         </div>
 
+        <div className="public-profile-tag-strip">
+          <span>{isDutch ? 'Publiek op je profiel' : 'Public on your profile'}</span>
+          <div>
+            {publicNodes.length ? publicNodes.map((node) => (
+              <button type="button" onClick={() => setNodePublic(node, false)} key={`public-${node.id}`}>
+                {node.value}
+                <X size={11} />
+              </button>
+            )) : (
+              <small>{isDutch ? 'Nog geen publieke tags geselecteerd.' : 'No public tags selected yet.'}</small>
+            )}
+          </div>
+        </div>
+
         <div className="neural-node-board">
           {displayNodes.length ? displayNodes.map((node) => {
-            const isProfileTag = Boolean(profileTags[node.id])
-            const profileVisible = nodeVisibility[node.id] === true || isProfileTag
+            const profileVisible = Object.hasOwn(nodeVisibility, node.id)
+              ? nodeVisibility[node.id]
+              : approvedProfileTagKeys.has(profileSignalMergeKey(node.value || node.label))
             return (
               <article
                 className={`neural-node ${node.kind} ${node.active ? 'active' : ''} ${profileVisible ? '' : 'profile-hidden'}`}
@@ -9407,6 +9508,14 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
                 key={node.id}
               >
                 <i />
+                <button
+                  className="neural-card-remove"
+                  type="button"
+                  onClick={() => removeNode(node)}
+                  aria-label={isDutch ? `Verwijder ${node.value}` : `Remove ${node.value}`}
+                >
+                  <X size={14} />
+                </button>
                 <span>{node.label}</span>
                 <strong>{node.value}</strong>
                 <div className="neural-node-actions">
@@ -9427,14 +9536,6 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
                   >
                     <Brain size={13} />
                     {isDutch ? 'Alleen AI' : 'AI only'}
-                  </button>
-                  <button
-                    className="neural-node-remove"
-                    type="button"
-                    onClick={() => removeNode(node)}
-                    aria-label={isDutch ? `Verwijder ${node.value}` : `Remove ${node.value}`}
-                  >
-                    <X size={13} />
                   </button>
                 </div>
               </article>
@@ -9968,6 +10069,9 @@ function ActionModal({
   const [trustedContact, setTrustedContact] = useState('')
   const [reportReason, setReportReason] = useState(isDutch ? 'Ongepast of onveilig gedrag' : 'Inappropriate or unsafe behavior')
   const [reportNotes, setReportNotes] = useState('')
+  const albumPhotos = getRadarPhotos(match)
+  const [albumIndex, setAlbumIndex] = useState(0)
+  const activeAlbumPhoto = albumPhotos[albumIndex] ?? match.portrait ?? match.photo
 
   useEffect(() => {
     function closeOnEscape(event) {
@@ -10038,6 +10142,47 @@ function ActionModal({
               {isDutch ? 'Vraag foto-toegang' : 'Ask for photo access'}
             </button>
           </>
+        ) : null}
+
+        {modal.type === 'photoAlbum' ? (
+          <div className="photo-album-modal">
+            <h2>{isDutch ? `Foto's van ${match.name}` : `${match.name}'s photos`}</h2>
+            <div className="photo-album-stage">
+              <img src={activeAlbumPhoto} alt="" />
+              {albumPhotos.length > 1 ? (
+                <>
+                  <button
+                    className="photo-album-arrow left"
+                    type="button"
+                    onClick={() => setAlbumIndex((current) => (current - 1 + albumPhotos.length) % albumPhotos.length)}
+                    aria-label={isDutch ? 'Vorige foto' : 'Previous photo'}
+                  >
+                    <ChevronLeft size={22} />
+                  </button>
+                  <button
+                    className="photo-album-arrow right"
+                    type="button"
+                    onClick={() => setAlbumIndex((current) => (current + 1) % albumPhotos.length)}
+                    aria-label={isDutch ? 'Volgende foto' : 'Next photo'}
+                  >
+                    <ChevronRight size={22} />
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <div className="photo-album-strip">
+              {albumPhotos.map((photo, index) => (
+                <button
+                  className={index === albumIndex ? 'active' : ''}
+                  type="button"
+                  onClick={() => setAlbumIndex(index)}
+                  key={`${photo}-${index}`}
+                >
+                  <img src={photo} alt="" />
+                </button>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         {modal.type === 'shareDate' ? (
