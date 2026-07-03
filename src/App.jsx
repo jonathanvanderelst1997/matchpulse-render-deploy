@@ -5473,7 +5473,7 @@ function MatchRow({
   )
 }
 
-function approvedProfileTagsForMatch(match = {}) {
+function approvedProfileTagsForMatch(match = {}, limit = 120) {
   const seen = new Set()
   return (match.profileTags ?? [])
     .map((tag) => String(tag ?? '').replace(/\s+/g, ' ').trim())
@@ -5484,12 +5484,14 @@ function approvedProfileTagsForMatch(match = {}) {
       seen.add(key)
       return true
     })
-    .slice(0, 24)
+    .slice(0, limit)
 }
 
-function ApprovedProfileTags({ match, language = viewer.language }) {
+function ApprovedProfileTags({ match, language = viewer.language, openModal }) {
   const isDutch = language === 'Nederlands'
-  const tags = approvedProfileTagsForMatch(match)
+  const allTags = approvedProfileTagsForMatch(match, 120)
+  const tags = allTags.slice(0, 18)
+  const hiddenCount = Math.max(0, allTags.length - tags.length)
   if (!tags.length) return null
 
   return (
@@ -5499,6 +5501,11 @@ function ApprovedProfileTags({ match, language = viewer.language }) {
         {tags.map((tag) => (
           <span key={tag}>{tag}</span>
         ))}
+        {hiddenCount ? (
+          <button className="approved-profile-more" type="button" onClick={() => openModal?.({ type: 'publicTags', match })}>
+            +{hiddenCount} {isDutch ? 'meer' : 'more'}
+          </button>
+        ) : null}
       </div>
     </div>
   )
@@ -5522,7 +5529,7 @@ function SelectedMatch({ match, memoryNotes, openModal, setActiveView, submitMat
             {displayDistance(match.distance, language)}
             <b>{displayStatus(match.status, language)}</b>
           </span>
-          <ApprovedProfileTags match={match} language={language} />
+          <ApprovedProfileTags match={match} language={language} openModal={openModal} />
           <div className="hero-actions">
             <button type="button" onClick={() => openModal({ type: 'intro' })}>
               <Send size={18} />
@@ -9089,18 +9096,49 @@ function ProfileToolView({
       .slice(0, 56) || String(node.label || 'Nieuw signaal')
   }
 
+  function addExplicitPublicTag(targetProfile, tag) {
+    const cleanTag = String(tag ?? '').replace(/\s+/g, ' ').trim()
+    if (!cleanTag) return targetProfile
+    const currentTags = targetProfile.preferences?.publicTags ?? []
+    const nextTags = [...currentTags, cleanTag].filter((item, index, items) => {
+      const key = profileSignalMergeKey(item)
+      return key && items.findIndex((candidate) => profileSignalMergeKey(candidate) === key) === index
+    })
+    return {
+      ...targetProfile,
+      preferences: {
+        ...(targetProfile.preferences ?? {}),
+        publicTags: nextTags,
+      },
+    }
+  }
+
+  function removeExplicitPublicTag(targetProfile, tag) {
+    const removeKey = profileSignalMergeKey(tag)
+    return {
+      ...targetProfile,
+      preferences: {
+        ...(targetProfile.preferences ?? {}),
+        publicTags: (targetProfile.preferences?.publicTags ?? []).filter((item) => profileSignalMergeKey(item) !== removeKey),
+      },
+    }
+  }
+
   function addNeuralNodeAsProfileTag(node) {
     const group = neuralNodePreferenceGroup(node)
     const tag = neuralNodeTagText(node)
     setProfile((current) => addProfilePreferenceTag(current, tag, group))
   }
 
-  function setNeuralNodeProfileVisibility(node, isPublic) {
+  function setNeuralNodeProfileVisibility(node, isPublic, options = {}) {
     const group = neuralNodePreferenceGroup(node)
     const tag = neuralNodeTagText(node)
-    const nextProfile = isPublic
-      ? addProfilePreferenceTag(profile, tag, group)
-      : removeProfilePreferenceTag(profile, tag)
+    const profileWithPrivateSignal = addProfilePreferenceTag(profile, tag, group)
+    const nextProfile = options.remove
+      ? removeExplicitPublicTag(removeProfilePreferenceTag(profile, tag), tag)
+      : isPublic
+        ? addExplicitPublicTag(profileWithPrivateSignal, tag)
+        : removeExplicitPublicTag(profile, tag)
     setProfile(nextProfile)
     persistProfileSnapshot(nextProfile)
   }
@@ -9523,10 +9561,7 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
   const isDutch = isDutchLanguage(language)
   const [nodeVisibility, setNodeVisibility] = useState({})
   const approvedProfileTagKeys = new Set([
-    ...(profile.preferences?.values ?? []),
-    ...(profile.preferences?.visualTaste ?? []),
-    ...(profile.preferences?.dateRhythm ?? []),
-    ...(profile.preferences?.dealbreakers ?? []),
+    ...(profile.preferences?.publicTags ?? []),
   ].map(profileSignalMergeKey))
   const insightNodes = insightSignals.reduce((nodes, signal, index) => {
     const value = signalLabel(signal, language)
@@ -9575,7 +9610,8 @@ function NeuralMindMap({ map, profile, insightSignals = [], onRemoveSignal, onSe
       label: node.value || node.label,
       kind: node.kind,
     }
-    setNodePublic(node, false)
+    setNodeVisibility((current) => ({ ...current, [node.id]: false }))
+    onSetProfileTag(node, false, { remove: true })
     onRemoveSignal(signal)
   }
 
@@ -10200,6 +10236,29 @@ function SharedTagsModal({ match, language = viewer.language }) {
   )
 }
 
+function PublicTagsModal({ match, language = viewer.language }) {
+  const isDutch = isDutchLanguage(language)
+  const tags = approvedProfileTagsForMatch(match, 120)
+
+  return (
+    <div className="shared-tags-modal">
+      <h2>{isDutch ? `Publieke tags van ${match.name}` : `${match.name}'s public tags`}</h2>
+      <p>
+        {isDutch
+          ? 'Dit zijn alleen tags die deze persoon bewust publiek heeft gezet. Private AI-tags blijven verborgen maar mogen wel onderliggend meetellen voor matching.'
+          : 'These are only tags this person explicitly made public. Private AI tags stay hidden but can still inform matching underneath.'}
+      </p>
+      <div className="shared-tags-cloud">
+        {tags.length ? tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        )) : (
+          <small>{isDutch ? 'Geen publieke tags gekozen.' : 'No public tags selected.'}</small>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MediaHubModal({ match, language = viewer.language, sendIntro }) {
   const isDutch = isDutchLanguage(language)
   const [activeTab, setActiveTab] = useState('pics')
@@ -10436,6 +10495,10 @@ function ActionModal({
 
         {modal.type === 'sharedTags' ? (
           <SharedTagsModal match={modalMatch} language={language} />
+        ) : null}
+
+        {modal.type === 'publicTags' ? (
+          <PublicTagsModal match={modalMatch} language={language} />
         ) : null}
 
         {modal.type === 'mediaHub' ? (

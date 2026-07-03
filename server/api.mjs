@@ -444,7 +444,7 @@ function isUsefulServerProfileTag(value = '') {
   ].some((blocked) => key.includes(blocked))
 }
 
-function uniqueProfileTags(tags = [], limit = 18) {
+function uniqueProfileTags(tags = [], limit = 120) {
   const seen = new Set()
   return tags
     .map(cleanProfileTagText)
@@ -461,17 +461,15 @@ function uniqueProfileTags(tags = [], limit = 18) {
 function publicProfileTagsForUser(db, user) {
   const profile = user?.profile ?? {}
   const preferences = profile.preferences ?? {}
-  const approvedPreferenceTags = [
-    ...(preferences.values ?? []),
-    ...(preferences.visualTaste ?? []),
-    ...(preferences.dateRhythm ?? []),
-    ...(preferences.dealbreakers ?? []),
+  const explicitPublicTags = [
+    ...(profile.publicTags ?? []),
+    ...(preferences.publicTags ?? []),
   ]
   const approvedMemoryTags = normalizeMemories(db?.memories?.[user?.id])
     .filter((memory) => ['profile', 'shareable'].includes(memory.visibility))
     .map((memory) => memory.text)
 
-  return uniqueProfileTags([...approvedMemoryTags, ...approvedPreferenceTags])
+  return uniqueProfileTags([...approvedMemoryTags, ...explicitPublicTags], 48)
 }
 
 const sharedMatchConcepts = [
