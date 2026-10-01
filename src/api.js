@@ -1,20 +1,40 @@
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-  })
+  let response
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers ?? {}),
+      },
+    })
+  } catch (cause) {
+    const error = new Error('MatchPulse is not reachable right now. Check your connection; we will keep trying.')
+    error.code = 'network_error'
+    error.status = 0
+    error.cause = cause
+    throw error
+  }
 
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const error = new Error(payload.error ?? 'MatchPulse API request failed')
+    const error = new Error(payload.error ?? `MatchPulse API request failed (HTTP ${response.status})`)
     error.code = payload?.code
+    error.status = response.status
     error.details = payload
     throw error
   }
   return payload
+}
+
+// Alleen een 401 betekent dat de sessie echt weg is. Een 5xx (database gepauzeerd of
+// beperkt, Render die opstart) of een netwerkfout is tijdelijk: dan blijft de sessie staan.
+export function isSessionRejected(error) {
+  return error?.status === 401
+}
+
+export function isTemporaryOutage(error) {
+  return error?.status === 0 || error?.status >= 500 || error?.code === 'database_unavailable'
 }
 
 function withSession(sessionId, body = {}) {

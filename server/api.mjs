@@ -1180,25 +1180,228 @@ async function fetchSupabaseAuthUserById(authUserId) {
   }
 }
 
-async function supabaseRequest(path, options = {}) {
-  const response = await fetch(`${supabaseUrl()}${path}`, {
-    method: options.method ?? 'GET',
-    headers: {
-      apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers ?? {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  })
-  const text = await response.text()
-  const payload = text ? JSON.parse(text) : null
+// Supabase-bereikbaarheid. Voorheen had een Supabase-aanroep geen tijdslimiet (undici
+// wacht tot 300 s), geen herhaling, en een JSON.parse op elk antwoord: een gepauzeerd
+// project (HTTP 540), een Fair-Use-restrictie (HTTP 402) of een HTML-foutpagina werd zo
+// een onleesbare "Unexpected token" en elke API-aanroep, ook /api/health, een kale 500.
+// Nu: een tijdslimiet per poging, herhaling met backoff voor wat voorbijgaand is, en een
+// fout met een vaste code, zodat de API eerlijk 503 kan melden en de laatst geladen staat
+// alleen-lezen kan blijven tonen.
+function envNumber(name, fallback, { min = 0 } = {}) {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value >= min ? value : fallback
+}
 
-  if (!response.ok) {
-    throw new Error(payload?.message ?? payload?.error ?? `Supabase request failed: ${response.status}`)
+const supabaseTimeoutMs = envNumber('MATCHPULSE_SUPABASE_TIMEOUT_MS', 10000, { min: 1 })
+const supabaseRetries = Math.floor(envNumber('MATCHPULSE_SUPABASE_RETRIES', 2))
+const supabaseRetryBaseMs = envNumber('MATCHPULSE_SUPABASE_RETRY_BASE_MS', 500)
+const processStartedAt = now()
+
+class SupabaseError extends Error {
+  constructor(message, { status = 0, code = 'supabase_error', outage = true, retryable = false } = {}) {
+    super(message)
+    this.name = 'SupabaseError'
+    this.status = status
+    this.code = code
+    this.outage = outage
+    this.retryable = retryable
+  }
+}
+
+function isSupabaseOutage(error) {
+  return error instanceof SupabaseError && error.outage
+}
+
+function shortDetail(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
+}
+
+function supabaseTransportError(error) {
+  const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+  if (timedOut) {
+    return new SupabaseError(`Supabase did not answer within ${supabaseTimeoutMs} ms`, {
+      code: 'supabase_timeout',
+      retryable: true,
+    })
+  }
+  const cause = error?.cause?.code ?? error?.code ?? ''
+  return new SupabaseError(`Supabase is unreachable${cause ? ` (${cause})` : ''}`, {
+    code: 'supabase_unreachable',
+    retryable: true,
+  })
+}
+
+function supabaseHttpError(status, payload, text) {
+  const providerMessage = shortDetail(payload?.message ?? payload?.error ?? payload?.msg ?? '')
+  if (status === 540) {
+    return new SupabaseError('Supabase project is paused (HTTP 540)', { status, code: 'supabase_paused' })
+  }
+  if (status === 402) {
+    return new SupabaseError(
+      `Supabase project is restricted (HTTP 402)${providerMessage ? `: ${providerMessage}` : ''}`,
+      { status, code: 'supabase_restricted' },
+    )
+  }
+  if (status === 401 || status === 403) {
+    return new SupabaseError(
+      `Supabase rejected the service key (HTTP ${status})${providerMessage ? `: ${providerMessage}` : ''}`,
+      { status, code: 'supabase_key_rejected' },
+    )
+  }
+  if (status === 429) {
+    return new SupabaseError('Supabase is rate limiting requests (HTTP 429)', {
+      status,
+      code: 'supabase_rate_limited',
+      retryable: true,
+    })
+  }
+  if (status === 544 || status === 504) {
+    return new SupabaseError(`Supabase gateway timed out (HTTP ${status})`, {
+      status,
+      code: 'supabase_timeout',
+      retryable: true,
+    })
+  }
+  if (status >= 500) {
+    return new SupabaseError(
+      `Supabase is unavailable (HTTP ${status})${providerMessage ? `: ${providerMessage}` : ''}`,
+      { status, code: 'supabase_unavailable', retryable: true },
+    )
+  }
+  // Overige 4xx: een fout in het verzoek zelf (bijvoorbeeld een ontbrekende tabel). Het
+  // bericht van PostgREST blijft zoals het was; schema-status en de Auth-brug lezen het.
+  return new SupabaseError(providerMessage || shortDetail(text) || `Supabase request failed: ${status}`, {
+    status,
+    code: 'supabase_request_failed',
+    outage: status === 404,
+  })
+}
+
+async function supabaseRequestOnce(path, options) {
+  let response
+  let text
+  try {
+    response = await fetch(`${supabaseUrl()}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers ?? {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(supabaseTimeoutMs),
+    })
+    text = await response.text()
+  } catch (error) {
+    throw supabaseTransportError(error)
   }
 
+  let payload = null
+  let parsed = true
+  if (text) {
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      parsed = false
+    }
+  }
+
+  if (!response.ok) throw supabaseHttpError(response.status, payload, text)
+  if (!parsed) {
+    throw new SupabaseError(`Supabase answered HTTP ${response.status} without JSON`, {
+      status: response.status,
+      code: 'supabase_bad_response',
+      retryable: true,
+    })
+  }
   return payload
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// De staat is één rij die bij elke schrijfactie volledig wordt overschreven (upsert), dus
+// een herhaling na een time-out schrijft hoogstens dezelfde inhoud nog eens.
+async function supabaseRequest(path, options = {}) {
+  const attempts = 1 + (options.retries ?? supabaseRetries)
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const payload = await supabaseRequestOnce(path, options)
+      if (options.track) markSupabaseUp()
+      return payload
+    } catch (error) {
+      lastError = error
+      if (!error.retryable || attempt === attempts) break
+      await wait(supabaseRetryBaseMs * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5))
+    }
+  }
+  if (options.track && isSupabaseOutage(lastError)) markSupabaseDown(lastError)
+  throw lastError
+}
+
+// Wat /api/health over Supabase meldt. Alleen de staatsaanroepen (laden en bewaren) tellen
+// mee: een 404 van de Auth-brug of een ontbrekende 0005-tabel in schema-status zegt niets
+// over of de app werkt.
+const supabaseDependency = {
+  state: 'unknown',
+  code: null,
+  status: null,
+  detail: null,
+  since: null,
+  lastOkAt: null,
+  lastFailureAt: null,
+  consecutiveFailures: 0,
+}
+
+function markSupabaseUp() {
+  const at = now()
+  if (supabaseDependency.state === 'down') {
+    console.log(`[supabase] weer bereikbaar na ${supabaseDependency.code} sinds ${supabaseDependency.since}`)
+  }
+  if (supabaseDependency.state !== 'up') supabaseDependency.since = at
+  Object.assign(supabaseDependency, {
+    state: 'up',
+    code: null,
+    status: null,
+    detail: null,
+    lastOkAt: at,
+    consecutiveFailures: 0,
+  })
+}
+
+function markSupabaseDown(error) {
+  const at = now()
+  if (supabaseDependency.state !== 'down' || supabaseDependency.code !== error.code) {
+    console.error(`[supabase] niet bruikbaar: ${error.code} status=${error.status || '-'} ${shortDetail(error.message)}`)
+    supabaseDependency.since = at
+  }
+  Object.assign(supabaseDependency, {
+    state: 'down',
+    code: error.code,
+    status: error.status || null,
+    detail: shortDetail(error.message),
+    lastFailureAt: at,
+    consecutiveFailures: supabaseDependency.consecutiveFailures + 1,
+  })
+}
+
+function supabaseMisconfigured() {
+  return process.env.MATCHPULSE_DATA_PROVIDER === 'supabase' && !useSupabaseState()
+}
+
+function supabaseDependencySnapshot() {
+  if (supabaseMisconfigured()) {
+    return {
+      state: 'misconfigured',
+      code: 'supabase_env_missing',
+      detail: 'MATCHPULSE_DATA_PROVIDER=supabase, but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is empty: state is kept in an ephemeral local file',
+    }
+  }
+  if (!useSupabaseState()) return { state: 'not_used' }
+  return { ...supabaseDependency }
 }
 
 async function checkSupabaseRelation({ id, table, select = 'id', label }) {
@@ -1271,11 +1474,55 @@ async function supabaseSchemaStatus() {
   }
 }
 
+// Egress guard. Elke API-aanroep had de volledige staat (matchpulse_app_state.data)
+// opnieuw van Supabase gehaald; met polling om de 15 s liep dat op tot tientallen GB
+// per maand. Nu vragen we eerst alleen updated_at op (enkele tientallen bytes) en
+// halen we de volledige staat enkel opnieuw als een andere schrijver hem veranderde.
+// Elke aanroep krijgt een eigen kopie, dus het gedrag per request blijft gelijk.
+const supabaseStateCache = { json: '', updatedAtMs: Number.NaN }
+const supabaseStateCounters = { fullLoads: 0, versionProbes: 0, cacheHits: 0 }
+
+function timestampMs(value) {
+  const parsed = Date.parse(String(value ?? ''))
+  return Number.isFinite(parsed) ? parsed : Number.NaN
+}
+
+function rememberSupabaseState(json, updatedAtMs) {
+  if (!json || !Number.isFinite(updatedAtMs)) return
+  // Nooit terug naar een oudere versie: een trage lezing mag een recentere schrijf niet overschrijven.
+  if (Number.isFinite(supabaseStateCache.updatedAtMs) && updatedAtMs < supabaseStateCache.updatedAtMs) return
+  supabaseStateCache.json = json
+  supabaseStateCache.updatedAtMs = updatedAtMs
+}
+
+function supabaseStateRowPath(select) {
+  return `/rest/v1/matchpulse_app_state?id=eq.${encodeURIComponent(supabaseStateId)}&select=${select}`
+}
+
+// De laatst geladen staat, alleen-lezen, voor als Supabase wegvalt terwijl dit proces al
+// draait. Na een herstart (of het inslapen van een gratis Render-dienst) is ze er niet.
+function cachedSupabaseDb() {
+  if (!supabaseStateCache.json) return null
+  return ensureDatabaseShape(JSON.parse(supabaseStateCache.json))
+}
+
 async function loadSupabaseState() {
-  const rows = await supabaseRequest(
-    `/rest/v1/matchpulse_app_state?id=eq.${encodeURIComponent(supabaseStateId)}&select=data`,
-  )
-  if (rows?.[0]?.data) return ensureDatabaseShape(rows[0].data)
+  if (supabaseStateCache.json) {
+    supabaseStateCounters.versionProbes += 1
+    const probe = await supabaseRequest(supabaseStateRowPath('updated_at'), { track: true })
+    const currentMs = timestampMs(probe?.[0]?.updated_at)
+    if (Number.isFinite(currentMs) && currentMs === supabaseStateCache.updatedAtMs) {
+      supabaseStateCounters.cacheHits += 1
+      return ensureDatabaseShape(JSON.parse(supabaseStateCache.json))
+    }
+  }
+
+  supabaseStateCounters.fullLoads += 1
+  const rows = await supabaseRequest(supabaseStateRowPath('data,updated_at'), { track: true })
+  if (rows?.[0]?.data) {
+    rememberSupabaseState(JSON.stringify(rows[0].data), timestampMs(rows[0].updated_at))
+    return ensureDatabaseShape(rows[0].data)
+  }
 
   const db = createSeedDatabase()
   await saveSupabaseState(db)
@@ -1283,15 +1530,19 @@ async function loadSupabaseState() {
 }
 
 async function saveSupabaseState(db) {
+  const data = ensureDatabaseShape(db)
+  const updatedAt = now()
   await supabaseRequest('/rest/v1/matchpulse_app_state?on_conflict=id', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates' },
     body: {
       id: supabaseStateId,
-      data: ensureDatabaseShape(db),
-      updated_at: now(),
+      data,
+      updated_at: updatedAt,
     },
+    track: true,
   })
+  rememberSupabaseState(JSON.stringify(data), timestampMs(updatedAt))
 }
 
 function safeFilePath(root, requestPath) {
@@ -1382,6 +1633,9 @@ async function storeSupabasePhoto(bytes, extension, userId) {
         apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
         'Content-Type': mime,
+        // Bestandsnamen zijn uniek (tijd + uuid) en worden nooit overschreven: laat browsers en
+        // de Supabase-CDN ze een jaar bewaren in plaats van bij elke weergave opnieuw te vragen.
+        'Cache-Control': 'max-age=31536000',
         'x-upsert': 'false',
       },
       body: bytes,
@@ -2759,14 +3013,61 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-function send(response, status, payload) {
+function send(response, status, payload, headers = {}) {
   response.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'Access-Control-Expose-Headers': 'X-MatchPulse-Degraded',
+    ...headers,
   })
   response.end(JSON.stringify(payload))
+}
+
+const databaseUnavailableReasons = {
+  supabase_paused: 'the database project is paused',
+  supabase_restricted: 'the database project is restricted by its free-plan usage limits',
+  supabase_key_rejected: 'the database rejected the server key',
+  supabase_timeout: 'the database did not answer in time',
+  supabase_unreachable: 'the database is unreachable',
+  supabase_rate_limited: 'the database is rate limiting requests',
+  supabase_request_failed: 'the database table is missing',
+}
+
+function sendDatabaseUnavailable(response, error) {
+  const reason = databaseUnavailableReasons[error.code] ?? 'the database is unavailable'
+  send(
+    response,
+    503,
+    {
+      error: `MatchPulse can't reach its database right now: ${reason}. Nothing was saved; please try again later.`,
+      code: 'database_unavailable',
+      reason: error.code,
+    },
+    { 'Retry-After': '30' },
+  )
+}
+
+function healthPayload(request, db, error = null) {
+  const dependency = supabaseDependencySnapshot()
+  const ok = !error && dependency.state !== 'misconfigured'
+  return {
+    ok,
+    ...(error ? { error: error.code ?? 'error' } : {}),
+    ...(db
+      ? {
+          users: db.users.filter((user) => !user.deletedAt).length,
+          onboarded: db.users.filter((user) => user.onboarded && !user.deletedAt).length,
+        }
+      : {}),
+    stateCache: { ...supabaseStateCounters, cached: Boolean(supabaseStateCache.json) },
+    uptimeSeconds: Math.round(process.uptime()),
+    startedAt: processStartedAt,
+    release: process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 12) : null,
+    dependencies: { supabase: dependency },
+    providerStatus: providerStatus(request),
+  }
 }
 
 function notFound(response) {
@@ -2786,13 +3087,11 @@ function shouldSerializeMutation(request, requestUrl) {
   )
 }
 
-async function routeCore(request, response) {
+async function routeCore(request, response, requestUrl) {
   if (request.method === 'OPTIONS') {
     send(response, 204, {})
     return
   }
-
-  const requestUrl = new URL(request.url, `http://${request.headers.host}`)
 
   try {
     const staticMethod = request.method === 'GET' || request.method === 'HEAD'
@@ -2815,15 +3114,47 @@ async function routeCore(request, response) {
       return
     }
 
-    const db = await loadDb()
+    // Leeft het proces? Raakt Supabase niet, dus ook bruikbaar als Supabase plat ligt.
+    if (request.method === 'GET' && requestUrl.pathname === '/api/live') {
+      send(response, 200, { ok: true, uptimeSeconds: Math.round(process.uptime()), startedAt: processStartedAt })
+      return
+    }
 
-    if (request.method === 'GET' && requestUrl.pathname === '/api/health') {
-      send(response, 200, {
-        ok: true,
-        users: db.users.filter((user) => !user.deletedAt).length,
-        onboarded: db.users.filter((user) => user.onboarded && !user.deletedAt).length,
-        providerStatus: providerStatus(request),
-      })
+    const isHealth = request.method === 'GET' && requestUrl.pathname === '/api/health'
+    let db
+    let degradedReason = ''
+    try {
+      db = await loadDb()
+    } catch (error) {
+      if (!isSupabaseOutage(error)) throw error
+      if (isHealth) {
+        send(response, 503, healthPayload(request, null, error))
+        return
+      }
+      // Lezen mag uit de laatst geladen staat; schrijven niet, want dat zou bij herstel
+      // verloren gaan of een nieuwere versie overschrijven.
+      db = request.method === 'GET' ? cachedSupabaseDb() : null
+      if (!db) {
+        sendDatabaseUnavailable(response, error)
+        return
+      }
+      degradedReason = error.code
+      // Een sessie die niet in de bewaarde kopie staat, is niet verlopen: we kunnen het nu
+      // alleen niet nagaan. Een 401 zou de gebruiker uitloggen.
+      const sessionId = requestUrl.searchParams.get('sessionId')
+      if (sessionId && !getSessionUser(db, sessionId)) {
+        sendDatabaseUnavailable(response, error)
+        return
+      }
+      response.setHeader('X-MatchPulse-Degraded', degradedReason)
+    }
+
+    // /api/health raakt Supabase (loadDb) en houdt het gratis project zo wakker; de
+    // dagelijkse wekker (ops/wakker) rekent daarop. 200 alleen als de staat echt uit de
+    // ingestelde bron komt; anders 503 met de reden onder dependencies.supabase.
+    if (isHealth) {
+      const payload = healthPayload(request, db)
+      send(response, payload.ok ? 200 : 503, payload)
       return
     }
 
@@ -3950,20 +4281,66 @@ async function routeCore(request, response) {
 
     notFound(response)
   } catch (error) {
+    if (response.headersSent) {
+      if (!response.writableEnded) response.destroy()
+      return
+    }
+    if (isSupabaseOutage(error)) {
+      sendDatabaseUnavailable(response, error)
+      return
+    }
     send(response, 500, { error: error.message })
   }
 }
 
-async function route(request, response) {
-  const requestUrl = new URL(request.url, `http://${request.headers.host}`)
-  if (!shouldSerializeMutation(request, requestUrl)) {
-    await routeCore(request, response)
-    return
+// Een onleesbare Host-kop of request-URL gaf voorheen een TypeError buiten elke
+// try/catch: een onafgehandelde rejection die het hele proces stopte.
+function parseRequestUrl(request) {
+  const target = request.url || '/'
+  try {
+    return new URL(target, `http://${request.headers.host || 'localhost'}`)
+  } catch {
+    try {
+      return new URL(target, 'http://localhost')
+    } catch {
+      return null
+    }
   }
+}
 
-  const runMutation = mutationQueue.then(() => routeCore(request, response))
-  mutationQueue = runMutation.catch(() => {})
-  await runMutation
+async function route(request, response) {
+  try {
+    const requestUrl = parseRequestUrl(request)
+    if (!requestUrl) {
+      send(response, 400, { error: 'Bad request' })
+      return
+    }
+    if (!shouldSerializeMutation(request, requestUrl)) {
+      await routeCore(request, response, requestUrl)
+      return
+    }
+
+    const runMutation = mutationQueue.then(() => routeCore(request, response, requestUrl))
+    mutationQueue = runMutation.catch(() => {})
+    await runMutation
+  } catch (error) {
+    console.error(`[route] ${request.method} ${shortDetail(request.url)} faalde: ${shortDetail(error?.message ?? error)}`)
+    if (!response.headersSent) send(response, 500, { error: 'Internal server error' })
+    else if (!response.writableEnded) response.destroy()
+  }
+}
+
+// Laatste vangnet: een vergeten rejection mag de dienst niet stoppen. Een herstart kost
+// op het gratis Render-plan tot een minuut en wist de staatcache.
+process.on('unhandledRejection', (reason) => {
+  console.error(`[process] onafgehandelde rejection: ${shortDetail(reason?.stack ?? reason)}`)
+})
+
+if (supabaseMisconfigured()) {
+  console.error(
+    '[config] MATCHPULSE_DATA_PROVIDER=supabase, maar SUPABASE_URL of SUPABASE_SERVICE_ROLE_KEY ontbreekt: ' +
+      'de staat staat dan in een tijdelijk lokaal bestand en /api/health geeft 503.',
+  )
 }
 
 createServer(route).listen(PORT, HOST, () => {

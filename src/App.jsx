@@ -45,6 +45,8 @@ import {
   exportPrivateProfile,
   fetchAppState,
   hideMatchOnServer,
+  isSessionRejected,
+  isTemporaryOutage,
   removeAttentionSignal,
   removeMemory,
   reportAndBlockMatch,
@@ -2388,6 +2390,9 @@ function App() {
   const [isBooting, setIsBooting] = useState(() =>
     (Boolean(initialAuthState.sessionId) && initialAuthState.step === 'app') || hasSupabaseAuthCallback(),
   )
+  const [bootNotice, setBootNotice] = useState('')
+  const [bootRetryTick, setBootRetryTick] = useState(0)
+  const bootFailures = useRef(0)
   const [activeView, setActiveView] = useState('discover')
   const [selectedMatchId, setSelectedMatchId] = useState(matches[0].id)
   const [matchProfileReturnView, setMatchProfileReturnView] = useState('discover')
@@ -2668,9 +2673,12 @@ function App() {
       }
     }
 
+    let retryTimer = 0
     fetchAppState(sessionId)
       .then((state) => {
         if (cancelled) return
+        bootFailures.current = 0
+        setBootNotice('')
         if (!state.onboarded) {
           setProfileDraft(state.profile)
           setOnboardingDraft({
@@ -2699,19 +2707,33 @@ function App() {
       })
       .catch((error) => {
         if (cancelled) return
+        // Een database die even plat ligt of een Render-dienst die opstart, mag niemand
+        // uitloggen: de sessie blijft staan en we proberen het opnieuw, steeds wat later.
+        if (!isSessionRejected(error) && isTemporaryOutage(error)) {
+          bootFailures.current += 1
+          setBootNotice(error.message)
+          setIsBooting(true)
+          const delay = Math.min(5000 * 2 ** (bootFailures.current - 1), 60000)
+          retryTimer = window.setTimeout(() => setBootRetryTick((tick) => tick + 1), delay)
+          return
+        }
+        bootFailures.current = 0
+        setBootNotice('')
         window.localStorage.removeItem('matchpulse-session')
         setSessionId('')
         setAuthStep('login')
         setApiError(error.message)
+        setIsBooting(false)
       })
       .finally(() => {
-        if (!cancelled) setIsBooting(false)
+        if (!cancelled && !retryTimer) setIsBooting(false)
       })
 
     return () => {
       cancelled = true
+      window.clearTimeout(retryTimer)
     }
-  }, [applyAppState, authStep, sessionId])
+  }, [applyAppState, authStep, bootRetryTick, sessionId])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -2753,6 +2775,9 @@ function App() {
 
     let cancelled = false
     const refreshMatches = () => {
+      // Een verborgen tabblad hoeft niet om de 15 s de volledige appstaat op te halen;
+      // bij terugkeer (focus/visibilitychange) wordt meteen ververst.
+      if (document.hidden) return
       fetchAppState(sessionId)
         .then((state) => {
           if (cancelled) return
@@ -4037,7 +4062,7 @@ function App() {
   }
 
   if (isBooting) {
-    return <LoadingShell />
+    return <LoadingShell notice={bootNotice} />
   }
 
   if (authStep !== 'app') {
@@ -4325,7 +4350,7 @@ function App() {
   )
 }
 
-function LoadingShell() {
+function LoadingShell({ notice = '' }) {
   return (
     <main className="auth-shell">
       <header className="auth-topbar">
@@ -4340,9 +4365,14 @@ function LoadingShell() {
       <section className="auth-stage single">
         <section className="auth-panel loading-panel">
           <div className="auth-copy">
-            <p>Connecting</p>
+            <p>{notice ? 'Reconnecting' : 'Connecting'}</p>
             <h1>Your private match space is opening.</h1>
             <span>We are loading your profile, matches, memory and account controls.</span>
+            {notice ? (
+              <p className="auth-error" role="status">
+                {notice} Your session is kept; we retry automatically.
+              </p>
+            ) : null}
           </div>
           <AuthPulseVisual step="pulse" profile={viewer} photos={[viewer.photo]} copy={authText(viewer.language).visual} />
         </section>

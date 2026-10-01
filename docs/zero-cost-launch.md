@@ -1,69 +1,106 @@
-# MatchPulse Zero-Cost Launch
+# MatchPulse Zero-Cost Launch Reference
 
-This path keeps the beta at 0 EUR/month while still allowing real testers.
+This document describes a possible zero-cost beta architecture. It is not authority to replace the current public ingress, repoint a Render service or modify a Supabase project. Read [deployment-topology.md](deployment-topology.md) first.
 
-## Free Architecture
+## Reference architecture
 
-- Frontend and API: Render Free web service using `render.yaml`.
-- Auth: free beta login by default; Supabase Free Auth with Google/Apple providers when explicitly enabled.
-- Database: Supabase Free via the `matchpulse_app_state` snapshot table.
-- Photo storage: Supabase Free Storage bucket `profile-photos`.
+- Frontend and API: one confirmed Render Free web service using the private canonical source.
+- Auth: Supabase Free Auth, with providers enabled only after redirect and owner review.
+- Database: Supabase Free using the MatchPulse schema and state structures.
+- Photo storage: Supabase Free Storage bucket `profile-photos` with verified policies.
 - AI: built-in local heuristic, no OpenAI key.
-- Email: Resend Free for real account verification/reset emails, or local previews for private LAN/local testing.
+- Email: an approved free verification route; local previews are limited to local/LAN tests.
 
-## Environment
+The present system has two repositories and two Render services. This reference becomes actionable only after traffic, data-provider binding, migration execution and rollback evidence are complete.
 
-Use `.env.free.example` as the template for Render env vars.
+## Environment categories
 
-Required for public free beta:
+Use `.env.free.example` as a checklist inside the approved provider dashboard. Never paste values into documentation, issues, pull requests or chat.
+
+Required categories for a selected public beta route include:
 
 ```bash
-MATCHPULSE_PUBLIC_URL=https://your-free-render-url.onrender.com
+MATCHPULSE_PUBLIC_URL=
 MATCHPULSE_DATA_PROVIDER=supabase
 MATCHPULSE_STORAGE_PROVIDER=supabase
 MATCHPULSE_STATE_ID=beta
 MATCHPULSE_STORAGE_BUCKET=profile-photos
-SUPABASE_URL=...
-SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
 VITE_MATCHPULSE_OAUTH_PROVIDERS=
-RESEND_API_KEY=...
-MATCHPULSE_FROM_EMAIL=MatchPulse <briefing@yourdomain.com>
+MATCHPULSE_EMAIL_PROVIDER=supabase
+MATCHPULSE_FROM_EMAIL=
 MATCHPULSE_REQUIRE_EMAIL_VERIFICATION=1
-MATCHPULSE_REQUIRE_EMAIL_DELIVERY=1
+MATCHPULSE_REQUIRE_EMAIL_DELIVERY=0
 ```
 
-Keep these empty for strict zero-cost mode:
+Keep this empty for strict zero-cost mode:
 
 ```bash
 OPENAI_API_KEY=
 ```
 
-## Setup Order
+## Migration order
 
-1. Create the Supabase Free project.
-2. Run migrations `0001`, `0002`, and `0003`.
-3. Add Auth redirect URLs for the Render URL.
-4. Add a verified sender/domain in Resend and set `RESEND_API_KEY` plus `MATCHPULSE_FROM_EMAIL`.
-5. Leave `VITE_MATCHPULSE_OAUTH_PROVIDERS` empty until a provider is enabled in Supabase Auth. After Google works in Supabase, set it to `google`.
-6. Deploy with Render Free using `render.yaml`.
-7. Add the required env vars in Render.
-8. Run `MATCHPULSE_TEST_API=https://your-free-render-url.onrender.com npm run readiness:public-free`.
-9. Create one account, verify it with the Supabase Auth email, complete onboarding, copy the invite link, and open it in a private browser to create another tester.
+Run this check locally before any build or database decision:
 
-## Limits To Respect
+```bash
+npm run verify:migration-plan
+```
+
+The repository must expose exactly one SQL file for each required prefix `0001`, `0002`, `0003`, `0004` and `0005`. Use the actual filenames and apply them only in lexical order against the confirmed target project.
+
+The last read-only hosted migration list was empty. Do not respond by blindly executing all five files. First compare the target schema, migration history, application readiness and rollback plan. A matching schema is relation evidence, not ordered execution proof.
+
+## Preparation order
+
+1. Confirm which Render URL is intended to become the public route.
+2. Confirm which Supabase project is bound to that service.
+3. Run `npm run verify:migration-plan`.
+4. Establish the execution state of migrations `0001` through `0005` without reading user data.
+5. Obtain explicit approval before applying a missing migration.
+6. Verify `/api/schema-status` on the intended runtime.
+7. Verify Auth redirect URLs, signup, verification, login, logout and reset.
+8. Verify `profile-photos` upload, read and delete behavior with the intended policies.
+9. Confirm the email provider and sender-domain status.
+10. Run `npm run lint`, `npm run smoke`, `npm run build` and `npm run readiness` locally.
+11. Run strict readiness and smoke only against the confirmed deployment target.
+12. Name and test a rollback target before external tester invitations.
+13. Obtain explicit cutover approval before changing traffic, services or repository roles.
+
+## Verification commands
+
+```bash
+npm run verify:migration-plan
+npm run lint
+npm run smoke
+npm run build
+npm run readiness
+```
+
+For a confirmed deployed target only:
+
+```bash
+MATCHPULSE_TEST_API=https://confirmed-target.example npm run readiness:public-free
+MATCHPULSE_TEST_API=https://confirmed-target.example MATCHPULSE_TEST_WEB=https://confirmed-target.example npm run smoke
+```
+
+## Limits to respect
 
 - Render Free can sleep after inactivity, so first load can be slow.
-- Supabase Free has storage/database/auth limits; keep early beta small.
+- Supabase Free has storage, database and Auth limits; keep early beta small.
 - Local AI is deterministic and cheap, but not as nuanced as paid model calls.
-- Supabase Auth email is enough for very low-volume early beta verification. Resend stays the later upgrade after a sender domain is verified.
+- Free email limits and sender requirements still apply.
+- Free tiers are not a long-term production compliance, backup or recovery plan.
+- Never use real profile or message content as deployment evidence.
 
-## Upgrade Later
+## Upgrade later
 
-Only add paid services after the product proves people want it:
+Only add paid services after the product proves people want it and the owner/recovery path is known:
 
 - OpenAI API for richer memory analysis.
-- Resend or another email provider for real weekly email delivery.
-- Paid hosting/database once free cold starts or limits hurt testing.
+- A verified transactional email provider for reliable delivery.
+- Paid hosting/database once cold starts, limits, backups or support requirements justify it.

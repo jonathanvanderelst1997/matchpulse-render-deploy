@@ -17,6 +17,7 @@ dist-ssr
 !.env.free.example
 server/matchpulse-db.json
 server/uploads/
+public/deployment-verification.json
 
 # Editor directories and files
 .vscode/*
